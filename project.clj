@@ -1,0 +1,13 @@
+(defproject bb-excel "0.0.1"
+  :description "A Simple Clojure/Babashka Library for Reading Data from Excel Files"
+  :license {:name "EPL-2.0"
+            :url "https://www.eclipse.org/legal/epl-2.0/"}
+  :dependencies [[org.clojure/clojure "1.11.1"]
+                 [org.clojure/data.xml "0.2.0-alpha6"]
+                 [org.clojure/tools.cli "1.0.206"]]
+  :plugins [[lein-codox "0.10.8"]]
+  :main bb-excel.cli
+  :uberjar-name "bb-excel.jar"
+  :jar-name "bb-excel-slim.jar"
+  :aot :all
+  :repl-options {:init-ns bb-excel.cli})

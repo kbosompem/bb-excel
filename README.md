@@ -1,2 +1,3 @@
 # bb-excel
-Read Excel Files in babashka scripts
+
+Use Babashka to extract data from Excel Spreadsheets
