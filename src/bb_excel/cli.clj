@@ -103,27 +103,4 @@
                          (print-table (:sheet y)))
       :else (bbexcel input output options))))
 
-
-#_(-main *command-line-args*)
-
-
-(comment
-  (range 10)
-
-  (-main "test/testdata/simple.xlsx" "lomo.edn")
-
-  (clojure.pprint/print-table
-   (:sheet (first (get-sheets "./test/testdata/datatypes.xlsx"))))
-
-  (bb-excel.core/get-sheet-names "./test/testdata/simple.xlsx")
-  (bb-excel.core/get-sheets "./test/testdata/simple.xlsx")
-
-  (->> "./test/testdata/"
-       clojure.java.io/file
-       file-seq
-       (filter #(.contains (.getName %) ".xlsx"))
-       (map (memfn getPath))
-       (mapcat #(get-sheets % {:rows 3 :row 1 :hdr true :fxn bbexcel.core/skeyword}))
-       (map :sheet)
-       (map clojure.pprint/print-table))
-  #{})
+(-main *command-line-args*)
