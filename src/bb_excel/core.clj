@@ -15,7 +15,7 @@
    :fxn  function :-  Which function to use parse header rows
    :rows integer  :-  Number of rows to extract
    :hdr  boolean  :- Rename columns with data from the first row"
-  {:row 1
+  {:row 0
    :fxn str
    :hdr false
    :rows 10000})
@@ -28,9 +28,15 @@
    :row-tag    #{:row
                  :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/row
                  :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/row}
-   :text-tag   #{:t
-                 :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/t
-                 :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/t}
+   :text-part   #{:si
+                  :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/si
+                  :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/si}
+   :text-t   #{:t
+               :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/t
+               :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/t}
+   :text-r   #{:r
+               :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/r
+               :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/r}
    :sheet-data #{:sheetData
                  :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/sheetData
                  :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/sheetData}
@@ -38,27 +44,26 @@
                  :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2FofficeDocument%2F2006%2Frelationships/id
                  :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2FofficeDocument%2Frelationships/id}})
 
-
 (defn get-sheet-names
   "Retrieves a list of Sheet Names from a given Excel Spreadsheet
    Returns nil if the file does not exist or a non-string is passed as the filename"
   [filename]
   (when (and (not-any? (fn [f] (f filename)) [nil? coll?])
              (.exists (file filename)))
-  (let [^ZipFile zf (ZipFile. ^String filename)
-        wb (.getEntry zf "xl/workbook.xml")
-        ins (.getInputStream zf wb)
-        x (parse-str (slurp ins))
-        y (filter #((:sheet-tag tags) (:tag %)) (xml-seq x))]
-    (->> y
-         first
-         :content
-         (map :attrs)
-         (map-indexed #(select-keys
-                        (rename-keys
-                         (assoc %2 :idx (inc %))
-                         (zipmap (:sheet-id tags) (repeat :id)))
-                        [:id :name :sheetId :idx]))))))
+    (let [^ZipFile zf (ZipFile. ^String filename)
+          wb (.getEntry zf "xl/workbook.xml")
+          ins (.getInputStream zf wb)
+          x (parse-str (slurp ins))
+          y (filter #((:sheet-tag tags) (:tag %)) (xml-seq x))]
+      (->> y
+           first
+           :content
+           (map :attrs)
+           (map-indexed #(select-keys
+                          (rename-keys
+                           (assoc %2 :idx (inc %))
+                           (zipmap (:sheet-id tags) (repeat :id)))
+                          [:id :name :sheetId :idx]))))))
 
 (defn s2d
   "Convert string to double"
@@ -102,6 +107,14 @@
                                (comp last :content last :content)
                                (comp first :content first :content)) coll)))))
 
+(defn- get-cell-text 
+  "Extract "
+  [coll]
+  (apply str
+         (mapcat :content
+                 (filter #((:text-t tags) (:tag %))
+                         (xml-seq coll)))))
+
 (defn get-unique-strings
   "Get dictionary of all unique strings in the Excel spreadsheet"
   [filename]
@@ -110,10 +123,10 @@
         ins (.getInputStream zf wb)
         x (parse-str (slurp ins))]
     (->>
-     (filter #((:text-tag tags) (:tag %)) (xml-seq x))
-     (map (comp first :content))
+     (filter #((:text-part tags) (:tag %)) (xml-seq x))
+     (map get-cell-text)
+     ;(map (comp last :content))
      (zipmap (range)))))
-
 
 (defn get-sheet
   "Get sheet from file"
@@ -123,6 +136,7 @@
    (let [opts    (merge defaults options)
          row     (:row opts)
          hdr     (:hdr opts)
+         row     (if (and hdr (zero? row)) 1 row)
          rows    (:rows opts)
          fxn     (:fxn opts)
          cols    (map fxn (:columns opts))
@@ -139,7 +153,7 @@
                        (map :content)
                        (take rows)
                        (map (partial process-row dict)))
-         dx (remove #(= 0 (:_r %)) d)
+         dx (remove #(= row (:_r %)) d)
          h (when hdr (merge (update-vals (first (filter #(= (:_r %) row) d)) fxn) {:_r :_r}))
          dy (if (pos? rows)
               (take rows (map #(rename-keys % h) dx))
@@ -159,6 +173,51 @@
                                     (catch Exception ex [(bean ex)]))) sxs))]
      res)))
 
+
+(defn when-num
+  "Returns nil for empty strings when a number is expected"
+  [s]
+  (cond
+    (empty? s) nil
+    (number? (read-string s))
+    (Integer/parseInt s)
+    :else 0))
+
+(defn when-str
+  "Returns nil for empty strings"
+  [s]
+  (cond
+    (empty? s) nil
+    :else s))
+
+(defn parse-range
+  "Takes in an Excel coordinate and returns a hashmap of rows and columns to pull"
+  [s]
+  (let [[[_ sc sr ec er]] (re-seq #"([A-Z]+)([1-9]*)[:]?([A-Z]*)([1-9]*)" s)
+        ec (or (when-str ec) sc)
+        sr (or (when-num sr) 1)
+        er (or (when-num er) 10000)]
+    {:cols [sc ec]
+     :rows [sr (inc er)]}))
+
+(defn to-col 
+  "Takes in an ordinal and returns its equivalent column heading."
+  [num]
+  (loop [n num s ()]
+    (if (> n 25)
+      (let [r (mod n 26)]
+        (recur (dec (/ (- n r) 26)) (cons (char (+ 65 r)) s)))
+      (keyword (apply str (cons (char (+ 65 n)) s))))))
+
+(defn crange 
+  "Creates as sequence of columns given a starting and ending column name."
+  [s e]
+  (cons :_r (let [sn (reduce + (map * (iterate (partial * 26) 1)
+                                    (reverse (map (comp (partial + -64) int identity) s))))
+                  en  (reduce + (map * (iterate (partial * 26) 1)
+                                     (reverse (map (comp (partial + -64) int identity) e))))]
+              (map to-col (range (dec sn) en)))))
+
 (defn get-row
   "Get row from sheet by row index"
   [sheet row]
@@ -170,9 +229,17 @@
   [sheet col]
   (map #(select-keys % [:_r col]) sheet))
 
-(defn get-range
+(defn get-cells
   "Get range of values returned as list of rows"
   [sheet rows cols]
   (map #(select-keys % cols)
-       (filter #((set rows) (:_r %))  sheet)))
+       (filter #((set rows) (:_r %)) sheet)))
 
+(defn get-range
+  "Get range of values using Excel cell coordinates
+   e.g A1:C5"
+  [sheet rg]
+  (let [{:keys [cols rows]} (parse-range rg)
+        [rs re] rows
+        [cs ce] cols]
+    (get-cells sheet (range rs re) (crange cs ce))))

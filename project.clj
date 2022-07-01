@@ -1,5 +1,6 @@
-(defproject bb-excel "0.0.1"
+(defproject com.github.kbosompem/bb-excel "0.0.2"
   :description "A Simple Clojure/Babashka Library for Reading Data from Excel Files"
+  :url "https://github.com/kbosompem/bb-excel"
   :license {:name "EPL-2.0"
             :url "https://www.eclipse.org/legal/epl-2.0/"}
   :dependencies [[org.clojure/clojure "1.11.1"]
