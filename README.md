@@ -28,6 +28,11 @@ The primary function is **get-sheet**
 In the first example below we pull data from a specific sheet within the workbook. It returns a list of hash-maps with :_r key indicating the row within the sheet. 
 
 ```clojure
+#!/usr/bin/env bb
+(require '[babashka.deps :as deps])
+(deps/add-deps 
+  '{:deps {com.github.kbosompem/bb-excel {:mvn/version "0.0.3"}}}) 
+
 (ns demo
   (:require [clojure.pprint :refer [print-table pprint]]
             [bb-excel.core  :refer [get-sheet get-sheets]]))
@@ -41,6 +46,7 @@ In the first example below we pull data from a specific sheet within the workboo
  {:_r 5, :A 4.0, :B "Breaking Bad"})
 
 ```
+
 Let's print out the results for better readability
 
 ```clojure

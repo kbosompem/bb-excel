@@ -4,6 +4,7 @@
             [clojure.java.io   :refer [file]]
             [clojure.string    :refer [trim]])
   (:import [java.time LocalDate Month]
+           [java.time.format DateTimeFormatter]
            [java.util.zip  ZipFile])
   (:gen-class))
 
@@ -79,21 +80,83 @@
             (string? n) (parse-double n)
             :else n)]
     (cond
-      (and (number? m) (pos? m)) (.toString (.plusDays (LocalDate/of 1899 Month/DECEMBER 30) m))
+      (and (number? m) (pos? m)) (.plusDays (LocalDate/of 1899 Month/DECEMBER 30) m)
       :else n)))
+
+(def error-codes
+  {"#NAME?"   :bad-name
+   "#DIV/0!"  :div-by-0
+   "#REF!"    :invalid-reference
+   "#NUM!"    :infinity
+   "#N/A"     :not-applicable
+   "#VALUE!"  :invalid-value
+   "#NULL!"   :null
+   nil :unknown-error})
+
+(def date-formats {"14"  "dd/MM/yyyy"
+                   "15"  "d-MMM-yy"
+                   "16"  "d-MMM"
+                   "17"  "MMM-yy"
+                   "18"  "h:mm AM/PM"
+                   "19"  "h:mm:ss AM/PM"
+                   "20"  "h:mm"
+                   "21"  "h:mm:ss"
+                   "22"  "M/d/yy h:mm"
+                   "30"  "M/d/yy"
+                   "34"  "yyyy-MM-dd"
+                   "45"  "mm:ss"
+                   "46"  "[h]:mm:ss"
+                   "47"  "mmss.0"
+                   "51"  "MM-dd"
+                   "52"  "yyyy-MM-dd"
+                   "53"  "yyyy-MM-dd"
+                   "55"  "yyyy-MM-dd"
+                   "56"  "yyyy-MM-dd"
+                   "58"  "MM-dd"
+                   "165"  "M/d/yy"
+                   "166"  "dd MMMM yyyy"
+                   "167"  "dd/MM/yyyy"
+                   "168"  "dd/MM/yy"
+                   "169"  "d.M.yy"
+                   "170"  "yyyy-MM-dd"
+                   "171"  "dd MMMM yyyy"
+                   "172"  "d MMMM yyyy"
+                   "173"  "M/d"
+                   "174"  "M/d/yy"
+                   "175"  "MM/dd/yy"
+                   "176"  "d-MMM"
+                   "177"  "d-MMM-yy"
+                   "178"  "dd-MMM-yy"
+                   "179"  "MMM-yy"
+                   "180"  "MMMM-yy"
+                   "181"  "MMMM d, yyyy"
+                   "182"  "M/d/yy hh:mm t"
+                   "183"  "M/d/y HH:mm"
+                   "184"  "MMM"
+                   "185"  "MMM-dd"
+                   "186"  "M/d/yyyy"
+                   "187" "d-MMM-yyyy"})
+
+(defn bbe-format [{:keys [s d]}]
+  (cond
+    (date-formats s) (try (.format (num2date d) (DateTimeFormatter/ofPattern (date-formats s)))
+                          (catch Exception ex (println ex) d))
+    :else d))
 
 (defn process-cell
   "Process Excel cell"
   [dict coll]
+  (clojure.pprint/pprint coll)
   (let [[[_ row col]] (re-seq #"([A-Z]*)([0-9]+)" (:r coll))
         u (-> coll
               (assoc :x row)
               (assoc :y col))]
     (cond
-      (= (:t u) "s")    (dissoc (assoc-in u [:d] (dict (read-string (:d u)))) :t)
-      (= (:t u) "str")  u
-      (= (:t u) "e")    (assoc-in u [:d] (str "Error : " (:d u)))
-      (= (:s u) "1")    (assoc-in u [:d] (num2date (:d u)))
+      (= (:t u) "s")      (dissoc (assoc-in u [:d] (dict (read-string (:d u)))) :t)
+      (= (:t u) "str")    (dissoc u :t)
+      (= (:t u) "b")      (dissoc (assoc-in u [:d] (if (= "1" (:d u)) true false)) :t)
+      (= (:t u) "e")      (assoc-in u [:d] (error-codes (:d u)))
+      (not (nil? (:s u))) (assoc-in u [:d] (bbe-format u))
       :else (update-in u [:d] s2d))))
 
 (defn process-row
@@ -107,7 +170,7 @@
                                (comp last :content last :content)
                                (comp first :content first :content)) coll)))))
 
-(defn- get-cell-text 
+(defn- get-cell-text
   "Extract "
   [coll]
   (apply str
@@ -127,6 +190,20 @@
      (map get-cell-text)
      ;(map (comp last :content))
      (zipmap (range)))))
+
+(defn get-num-format-map
+  "Get dictionary of all unique strings in the Excel spreadsheet"
+  [filename]
+  (let [zf (ZipFile. ^String filename)
+        wb (.getEntry zf (str "xl/sharedStrings.xml"))
+        ins (.getInputStream zf wb)
+        x (parse-str (slurp ins))]
+    (->>
+     (filter #((:text-part tags) (:tag %)) (xml-seq x))
+     (map get-cell-text)
+     ;(map (comp last :content))
+     (zipmap (range)))))
+
 
 (defn get-sheet
   "Get sheet from file"
@@ -200,7 +277,7 @@
     {:cols [sc ec]
      :rows [sr (inc er)]}))
 
-(defn to-col 
+(defn to-col
   "Takes in an ordinal and returns its equivalent column heading."
   [num]
   (loop [n num s ()]
@@ -209,7 +286,7 @@
         (recur (dec (/ (- n r) 26)) (cons (char (+ 65 r)) s)))
       (keyword (apply str (cons (char (+ 65 n)) s))))))
 
-(defn crange 
+(defn crange
   "Creates as sequence of columns given a starting and ending column name."
   [s e]
   (cons :_r (let [sn (reduce + (map * (iterate (partial * 26) 1)
@@ -243,3 +320,13 @@
         [rs re] rows
         [cs ce] cols]
     (get-cells sheet (range rs re) (crange cs ce))))
+
+(comment
+
+  (->>
+   (get-sheets "test/data/Types.xlsx" {:hdr false :rows 1000 :row 4})
+   second
+   :sheet
+   clojure.pprint/print-table)
+
+  #{})

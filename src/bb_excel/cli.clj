@@ -80,7 +80,7 @@
   [summary]
   (->> ["bbexcel"
         ""
-        "Usage: bb bb-excel input output options"
+        "Usage: bb input-file output-file options"
         ""
         "Options:"
         summary
@@ -89,7 +89,6 @@
        (join \newline)))
 
 (defn -main [& args]
-  (println args (count args))
   (let [{:keys [options arguments summary errors]}
         (parse-opts args cli-options)
         [input output] arguments]
