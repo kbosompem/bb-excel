@@ -2,7 +2,8 @@
   (:require [clojure.data.xml  :refer [parse-str]]
             [clojure.set       :refer [rename-keys]]
             [clojure.java.io   :refer [file]]
-            [clojure.string    :refer [trim]])
+            [clojure.string    :refer [trim]]
+            [clojure.pprint :refer [pprint]])
   (:import [java.time LocalDate Month]
            [java.time.format DateTimeFormatter]
            [java.util.zip  ZipFile])
@@ -32,6 +33,17 @@
    :text-part   #{:si
                   :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/si
                   :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/si}
+   :numFmts   #{:numFmts
+                :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/numFmts
+                :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/numFmts}
+   :cellxfs   #{:cellXfs
+                :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/cellXfs
+                :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/cellXfs}
+
+   :xf   #{:xf
+           :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/xf
+           :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/xf}
+
    :text-t   #{:t
                :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/t
                :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/t}
@@ -137,15 +149,19 @@
                    "186"  "M/d/yyyy"
                    "187" "d-MMM-yyyy"})
 
-(defn bbe-format [{:keys [s d]}]
-  (cond
-    (date-formats s) (try (.format (num2date d) (DateTimeFormatter/ofPattern (date-formats s)))
-                          (catch Exception ex (println ex) d))
-    :else d))
+(defn bbe-format
+  [styles nfs {:keys [s d] :as c}]
+  (println :c c)
+  (let [df (styles (max 0 (dec (parse-long s))))
+        style (nfs df)]
+    (cond
+      style (try (.format (num2date d) (DateTimeFormatter/ofPattern style))
+                 (catch Exception _ (println "Unable to format" c df style) d))
+      :else d)))
 
 (defn process-cell
   "Process Excel cell"
-  [dict coll]
+  [dict styles nfs coll]
   (clojure.pprint/pprint coll)
   (let [[[_ row col]] (re-seq #"([A-Z]*)([0-9]+)" (:r coll))
         u (-> coll
@@ -156,14 +172,14 @@
       (= (:t u) "str")    (dissoc u :t)
       (= (:t u) "b")      (dissoc (assoc-in u [:d] (if (= "1" (:d u)) true false)) :t)
       (= (:t u) "e")      (assoc-in u [:d] (error-codes (:d u)))
-      (not (nil? (:s u))) (assoc-in u [:d] (bbe-format u))
+      (not (nil? (:s u))) (assoc-in u [:d] (bbe-format styles nfs u))
       :else (update-in u [:d] s2d))))
 
 (defn process-row
   "Process Excel row of data"
-  [dict coll]
+  [dict styles nfs coll]
   (reduce #(merge % {:_r (read-string (:y %2)) (keyword (:x %2)) (:d %2)}) {}
-          (map (partial process-cell dict)
+          (map (partial process-cell dict styles nfs)
                (map #(merge (first %) {:d (second %)}
                             {:f (nth % 2)})
                     (map (juxt :attrs
@@ -192,18 +208,31 @@
      (zipmap (range)))))
 
 (defn get-num-format-map
-  "Get dictionary of all unique strings in the Excel spreadsheet"
+  "Get styles"
   [filename]
-  (let [zf (ZipFile. ^String filename)
-        wb (.getEntry zf (str "xl/sharedStrings.xml"))
+  (let [zf  (ZipFile. ^String filename)
+        wb  (.getEntry zf (str "xl/styles.xml"))
         ins (.getInputStream zf wb)
-        x (parse-str (slurp ins))]
-    (->>
-     (filter #((:text-part tags) (:tag %)) (xml-seq x))
-     (map get-cell-text)
-     ;(map (comp last :content))
-     (zipmap (range)))))
-
+        x   (parse-str (slurp ins))
+        s   (->> x
+                 xml-seq
+                 (filter #((:cellxfs tags) (:tag %)))
+                 first
+                 :content
+                 (filter #((:xf tags) (:tag %)))
+                 (mapv (comp :numFmtId :attrs)))
+        _ (pprint s)
+        nfs (merge (->> x
+                        xml-seq
+                        (filter #((:numFmts tags) (:tag %)))
+                        first
+                        :content
+                        (map :attrs)
+                        (map #(hash-map (:numFmtId %) (:formatCode %)))
+                        (apply merge))
+                   date-formats)
+        _ (pprint nfs)]
+    [s  nfs]))
 
 (defn get-sheet
   "Get sheet from file"
@@ -222,6 +251,7 @@
          wb      (.getEntry zf (str "xl/worksheets/sheet" sheetid ".xml"))
          ins     (.getInputStream zf wb)
          dict    (get-unique-strings filename)
+         [styles nfs]  (get-num-format-map filename)
          xx      (slurp ins)
          x       (parse-str xx)
          d       (->>  x :content
@@ -229,7 +259,7 @@
                        first :content
                        (map :content)
                        (take rows)
-                       (map (partial process-row dict)))
+                       (map (partial process-row dict styles nfs)))
          dx (remove #(= row (:_r %)) d)
          h (when hdr (merge (update-vals (first (filter #(= (:_r %) row) d)) fxn) {:_r :_r}))
          dy (if (pos? rows)
@@ -321,10 +351,11 @@
         [cs ce] cols]
     (get-cells sheet (range rs re) (crange cs ce))))
 
+
 (comment
 
   (->>
-   (get-sheets "test/data/Types.xlsx" {:hdr false :rows 1000 :row 4})
+   (get-sheets "test/data/Types.xlsx" {:hdr false :rows 1000 :row 0})
    second
    :sheet
    clojure.pprint/print-table)
