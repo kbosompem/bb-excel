@@ -2,7 +2,7 @@
 [![Clojars Project](https://img.shields.io/clojars/v/com.github.kbosompem/bb-excel.svg)](https://clojars.org/com.github.kbosompem/bb-excel)
 [![bb compatible](https://raw.githubusercontent.com/babashka/babashka/master/logo/badge.svg)](https://babashka.org)
 
-Use [**Babashka**](https://www.babashk.org) to extract data from Excel Spreadsheets!
+Use [**Babashka**](https://www.babashka.org) to extract data from Excel Spreadsheets!
 
 bb-excel is a simple [**Clojure**](https://www.clojure.org) library to extract data from Excel files without relying on the venerable Apache POI ooxml library. See below for rationale.
 
