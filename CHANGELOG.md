@@ -1,4 +1,4 @@
-0.0.3 / 2022-07-05
+0.0.3 / 2022-09-12
 ------------------
 - Fixed 
     - Booleans returned as integers
