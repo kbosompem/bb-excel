@@ -8,8 +8,8 @@
                  [org.clojure/tools.cli "1.0.206"]]
   :plugins [[lein-codox "0.10.8"]
             [lein-ancient "1.0.0-RC3"]]
-  :main bb-excel.cli
+  :main bb-excel.core
   :uberjar-name "bb-excel.jar"
   :jar-name "bb-excel-slim.jar"
   :aot :all
-  :repl-options {:init-ns bb-excel.cli})
+  :repl-options {:init-ns bb-excel.core})
