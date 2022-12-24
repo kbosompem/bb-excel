@@ -102,4 +102,3 @@
                          (print-table (:sheet y)))
       :else (bbexcel input output options))))
 
-;(-main *command-line-args*)

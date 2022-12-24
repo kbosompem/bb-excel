@@ -31,7 +31,7 @@ In the first example below we pull data from a specific sheet within the workboo
 #!/usr/bin/env bb
 (require '[babashka.deps :as deps])
 (deps/add-deps 
-  '{:deps {com.github.kbosompem/bb-excel {:mvn/version "0.0.3"}}}) 
+  '{:deps {com.github.kbosompem/bb-excel {:mvn/version "0.0.4"}}}) 
 
 (ns demo
   (:require [clojure.pprint :refer [print-table pprint]]

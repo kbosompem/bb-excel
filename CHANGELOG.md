@@ -1,3 +1,11 @@
+# bb-excel changelog
+
+0.0.4 / 2022-12-23
+------------------
+- Changed
+    - Added bbin support
+
+
 0.0.3 / 2022-09-12
 ------------------
 - Fixed 

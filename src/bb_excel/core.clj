@@ -136,7 +136,6 @@
       (style-check u styles pcts)   (assoc-in u [:d] (num2pct (:d u)))
       (style-check u styles dates)  (assoc-in u [:d] (num2date (:d u)))
       (style-check u styles times)  (assoc-in u [:d] (num2time (:d u)))
-
       :else u)))
 
 (defn process-row
