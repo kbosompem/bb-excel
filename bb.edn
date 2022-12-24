@@ -1,0 +1,2 @@
+{:paths ["src"]
+ :bbin/bin {bbexcel {:main-opts ["-x" "bb-excel.cli"]}}}
