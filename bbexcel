@@ -1,0 +1,140 @@
+#!/usr/bin/env bb
+
+(require '[babashka.deps :as deps])
+
+(deps/add-deps '{:deps {com.github.kbosompem/bb-excel {:mvn/version "0.0.4"}}})
+
+(ns bbexcel
+  (:require [bb-excel.core     :refer [get-sheets get-range get-sheet]]
+            [clojure.java.io   :refer [file make-parents copy]]
+            [org.httpkit.client :as c]
+            [clojure.tools.cli :refer [parse-opts]]
+            [clojure.string    :refer [split join lower-case trim] :as str]
+            [clojure.pprint    :refer [print-table]])
+  (:gen-class))
+
+(set! *warn-on-reflection* true)
+
+(defn ts [] (str (.getTime (java.util.Date.)) ".xlsx"))
+
+(defn- fetch-spreadsheet!
+  [url]
+  (let [req @(c/get url {:as :byte-array :throw-exceptions false})]
+    (when (= (:status req) 200)
+      (:body req))))
+
+(defn- save-spreadsheet!
+  [{:keys [url name]}]
+  (println "Saving spreadsheet to " name)
+  (some-> (fetch-spreadsheet! url) (copy (file "./" name)))
+  name)
+
+(defn left
+  "Takes up to n characters from a string"
+  [s n]
+  (cond (and s (string? s))
+        (subs s 0 (max 0 (min (count s) n)))
+        (coll? s) (take n s)))
+
+(defn skeyword
+  "Sanitizes column headers and converts them to keywords.
+   1. Removes slashes and spaces
+   2. Lower cases 
+   3. Takes up to 50 characters
+   4. Replaces non-ascii characters with an underscore.
+   
+   **Not appropriate for foreign language headers"
+  [s]
+  (keyword
+   (left
+    (str/replace
+     (str/replace (trim (lower-case (str s))) #"[\[\]]" "")
+     #"[^A-Za-z0-9\-]+" "_") 50)))
+
+(def fxns
+  "Map of functions"
+  {:str str
+   "str" str
+   :keyword keyword
+   "keyword" keyword
+   :skeyword skeyword
+   "skeyword" skeyword
+   nil str})
+
+(defn bbexcel
+  "Extract Excel Sheets into EDN"
+  [input-file options]
+  (let [l4 (lower-case (left input-file 4))
+        tx (ts)
+        input (if (= "http" l4)
+                (save-spreadsheet! {:url input-file :name tx})
+                input-file)]
+    (cond
+      (:print options)        (doseq [y (get-sheets input options)]
+                                (println :SHEET= (:name y))
+                                (print-table (:sheet y)))
+      (:output options)        (let [_ (make-parents (:output options))]
+                                 (spit (:output options)
+                                       (with-out-str (clojure.pprint/pprint
+                                                      (get-sheets input options)))))
+      (:range options)         (get-range (get-sheet input (:sheet options)) (:range options))
+      :else                    (spit (str  input ".edn")
+                                     (pr-str (get-sheets input options))))))
+
+(def cli-options
+  "Command Line Options"
+  [["-d" "--hdr" "Use Header Row"]
+   ["-r" "--row r" "Start Row"
+    :parse-fn #(parse-long %)
+    :desc "Start Row e.g -r 2 will start reading from row 2"]
+   ["-n" "--rows s" "End Row"
+    :parse-fn #(parse-long %)
+    :desc "End Row .e.g -n 10 will stop reading at the 10th row"]
+   ["-f" "--fxn f" "Header Function"
+    :parse-fn fxns
+    :desc "Header Functions to choose from str, keyword, skeyword "]
+   ["-o" "--output o" "Output"
+    :desc "Save output to file"]
+   ["-s" "--sheet x" "Sheet"
+    :desc "Sheet Name"]
+   ["-p" "--print"
+    :desc "Print Tables"]
+   ["-g" "--range g" "Range"
+    :desc "Range to Export"]
+   ["-c" "--columns c"
+    :parse-fn #(map keyword (split % #" "))
+    :desc "Columns"]
+   ["-h" "--help"]])
+
+(defn error-msg
+  "Error messages"
+  [errors]
+  (str "The following errors occurred while parsing your command:\n"
+       (join \newline errors)))
+
+(defn help
+  "Command line options"
+  [summary]
+  (->> ["bbexcel 0.0.4"
+        ""
+        "Usage: bbexcel input-file options"
+        ""
+        "Options:"
+        summary
+        ""
+        "Please refer to the manual page for more information."]
+       (join \newline)))
+
+(defn -main [& args]
+  (let [{:keys [options arguments summary errors]}
+        (parse-opts (first args) cli-options)
+        [input] arguments]
+    (cond
+      errors                  (println (error-msg errors))
+      (nil? input)            (println (help summary))
+      (or (nil? (first args))
+          (:help options))    (println (help summary))
+
+      :else                   (bbexcel input options))))
+
+(-main *command-line-args*)
