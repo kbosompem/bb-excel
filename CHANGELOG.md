@@ -1,4 +1,4 @@
-# bb-excel changelog
+# Changelog
 
 0.0.4 / 2022-12-23
 ------------------

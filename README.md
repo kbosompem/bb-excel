@@ -4,13 +4,20 @@
 
 Use [**Babashka**](https://www.babashka.org) to extract data from Excel Spreadsheets!
 
-bb-excel is a simple [**Clojure**](https://www.clojure.org) library to extract data from Excel files without relying on the venerable Apache POI ooxml library. See below for rationale.
+bb-excel is a simple [**Clojure**](https://www.clojure.org) library to extract data from Excel files without relying on the Apache POI OOXML library. See below for rationale.
 
 ## Installation
 
 Add the following dependency to your `project.clj` , `deps.edn`, or `bb.edn`
 
 [![Clojars Project](https://clojars.org/com.github.kbosompem/bb-excel/latest-version.svg)](https://clojars.org/com.github.kbosompem/bb-excel)
+
+## BBIN install
+You can also install it as a [**bbin**](https://github.com/babashka/bbin) utility to convert Excel Sheets to EDN
+```bash
+bbin install com.github.kbosompem/bb-excel --latest-sha
+```
+
 
 ## Status
 
@@ -126,10 +133,10 @@ Now that expects a sheet so
 2. No write planned at this moment
 
 
-## Why?
+## Rationale
 
 Why create another excel library in clojure when you can use docjure or wrap the venerable Apache POI library.
-Answer is simple. [**Babashka**](https://www.babashk.org), my scripting language of choice does not support Apache POI.
+Answer is simple. [**Babashka**](https://www.babashka.org), my scripting language of choice does not support Apache POI.
 This library currently reads xlsx files and returns a vector of hashmaps. Each hashmap representing a row in a selected sheet.
 
 
