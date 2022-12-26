@@ -1,2 +1,3 @@
 {:paths ["src"]
- :bbin/bin {bbexcel {:main-opts ["-f" "cli"]}}}
+ :bbin/bin {bb-excel {:main-opts ["-f" "bb-excel"]}
+            bbexcel {:main-opts ["-f" "bbexcel"]}}}
