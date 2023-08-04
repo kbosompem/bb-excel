@@ -249,7 +249,7 @@
 (defn parse-range
   "Takes in an Excel coordinate and returns a hashmap of rows and columns to pull"
   [s]
-  (let [[[_ osc osr oec oer]] (re-seq #"([A-Z]+)([1-9]*)[:]?([A-Z]*)([1-9]*)" s)
+  (let [[[_ osc osr oec oer]] (re-seq #"([A-Z]+)([0-9]*)[:]?([A-Z]*)([0-9]*)" s)
         sc (or osc "A")
         ec (or (when-str oec) (when-str osc) sc)
         sr (or (when-num osr) 1)

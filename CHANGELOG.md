@@ -1,5 +1,9 @@
 # Changelog
 
+0.0.5 / 2023-08-04
+- Changed
+    - Fixed parse-range
+
 0.0.4 / 2022-12-23
 ------------------
 - Changed
