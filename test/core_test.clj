@@ -34,7 +34,9 @@
     (is (nil? (get-sheet-names "missingfile.xlsx"))
         "File does not exist. Should return null.")
     (is (nil? (get-sheet-names nil))
-        "Filename was not passed in")))
+        "Filename was not passed in")
+    (is (= '({:_r 10 :A "9" :B "TextData"})
+            (get-range (get-sheet "test/data/Types.xlsx" "Sheet1") "A10:B10")))))
 
 (comment
   (run-tests)
