@@ -1,12 +1,13 @@
 (ns bb-excel.core
   (:require [clojure.data.xml  :refer [parse-str]]
-            [clojure.java.io   :refer [file]]
+            [clojure.java.io   :as io]
             [clojure.set       :refer [rename-keys]])
-  (:import [java.time LocalDate Month]
-           [java.text SimpleDateFormat]
-           [java.time.format DateTimeFormatter]
-           [java.util TimeZone]
-           [java.util.zip  ZipFile])
+    (:import [java.io File]
+             [java.time LocalDate Month]
+             [java.text SimpleDateFormat]
+             [java.time.format DateTimeFormatter]
+             [java.util TimeZone]
+             [java.util.zip ZipFile])
   (:gen-class))
 
 (set! *warn-on-reflection* true)
@@ -69,10 +70,10 @@
 (defn get-sheet-names
   "Retrieves a list of Sheet Names from a given Excel Spreadsheet
    Returns nil if the file does not exist or a non-string is passed as the filename"
-  [filename]
-  (when (and (not-any? (fn [f] (f filename)) [nil? coll?])
+  [file]
+  (when true #_(and (not-any? (fn [f] (f filename)) [nil? coll?])
              (.exists (file filename)))
-    (let [^ZipFile zf (ZipFile. ^String filename)
+    (let [^ZipFile zf (ZipFile. ^File file)
           wb (.getEntry zf "xl/workbook.xml")
           ins (.getInputStream zf wb)
           x (parse-str (slurp ins))
@@ -159,8 +160,8 @@
 
 (defn get-unique-strings
   "Get dictionary of all unique strings in the Excel spreadsheet"
-  [filename]
-  (let [zf (ZipFile. ^String filename)
+  [file]
+  (let [zf (ZipFile. ^File file)
         wb (.getEntry zf (str "xl/sharedStrings.xml"))
         ins (.getInputStream zf wb)
         x (parse-str (slurp ins))]
@@ -171,8 +172,8 @@
 
 (defn get-styles
   "Get styles"
-  [filename]
-  (let [zf  (ZipFile. ^String filename)
+  [file]
+  (let [zf  (ZipFile. ^File file)
         wb  (.getEntry zf (str "xl/styles.xml"))
         ins (.getInputStream zf wb)
         x   (parse-str (slurp ins))]
@@ -184,11 +185,11 @@
          (filter #((:xf tags) (:tag %)))
          (mapv (comp :numFmtId :attrs)))))
 
-(defn get-sheet
+(defn get-sheet-from-file
   "Get sheet from file"
-  ([filename sheetname]
-   (get-sheet filename sheetname {}))
-  ([filename sheetname options]
+  ([^File file sheetname]
+   (get-sheet-from-file file sheetname {}))
+  ([^File file sheetname options]
    (let [opts    (merge defaults options)
          row     (:row opts)
          hdr     (:hdr opts)
@@ -196,12 +197,12 @@
          rows    (:rows opts)
          fxn     (:fxn opts)
          cols    (map fxn (:columns opts))
-         sheetid (:idx (first (filter #(= sheetname (:name %)) (get-sheet-names filename))))
-         zf      (ZipFile. ^String filename)
+         sheetid (:idx (first (filter #(= sheetname (:name %)) (get-sheet-names file))))
+         zf      (ZipFile. ^File file)
          wb      (.getEntry zf (str "xl/worksheets/sheet" sheetid ".xml"))
          ins     (.getInputStream zf wb)
-         dict    (get-unique-strings filename)
-         styles  (get-styles filename)
+         dict    (get-unique-strings file)
+         styles  (get-styles file)
          xx      (slurp ins)
          x       (parse-str xx)
          d       (->>  x :content
@@ -215,7 +216,15 @@
          dy (if (pos? rows)
               (take rows (map #(rename-keys % h) dx))
               (map #(rename-keys % h) dx))]
-     (if (empty? cols) dy (map #(select-keys % cols) dy)))))
+        (if (empty? cols) dy (map #(select-keys % cols) dy)))))
+
+(defn get-sheet
+  "Get sheet from file"
+  ([^String filename sheetname]
+   (get-sheet filename sheetname {}))
+  ([^String filename sheetname options]
+   (let [file (io/file filename)]
+    (get-sheet-from-file file sheetname options))))
 
 (defn get-sheets
   "Get all or specified sheet from the excel spreadsheet"
