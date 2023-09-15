@@ -1,6 +1,6 @@
 (ns bb-excel.core
   (:require [clojure.data.xml  :refer [parse-str]]
-            [clojure.java.io   :refer [file]]
+            [clojure.java.io   :as io]
             [clojure.set       :refer [rename-keys]])
   (:import [java.time LocalDate Month]
            [java.text SimpleDateFormat]
@@ -71,7 +71,7 @@
    Returns nil if the file does not exist or a non-string is passed as the filename"
   [filename]
   (when (and (not-any? (fn [f] (f filename)) [nil? coll?])
-             (.exists (file filename)))
+             (.exists (io/file filename)))
     (let [^ZipFile zf (ZipFile. ^String filename)
           wb (.getEntry zf "xl/workbook.xml")
           ins (.getInputStream zf wb)
@@ -186,9 +186,9 @@
 
 (defn get-sheet
   "Get sheet from file"
-  ([filename sheetname]
+  ([file-or-filename sheetname]
    (get-sheet filename sheetname {}))
-  ([filename sheetname options]
+  ([file-or-filename sheetname options]
    (let [opts    (merge defaults options)
          row     (:row opts)
          hdr     (:hdr opts)
