@@ -7,7 +7,7 @@
                                    ]])
   (:import [java.util.zip ZipFile]))
 
-(deftest zipfile-or-nil
+(deftest zipfile-or-nil-test
   (let [zipfile-or-nil #'bb-excel.core/zipfile-or-nil]
     (let [file (io/file "test/data/simple.xlsx")]
       (is (instance? ZipFile (zipfile-or-nil file))))
