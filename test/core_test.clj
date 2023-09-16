@@ -1,9 +1,20 @@
 (ns core-test
-  (:require [clojure.test :refer [deftest is testing run-tests]]
+  (:require [clojure.java.io :as io]
+            [clojure.test :refer [deftest is testing run-tests]]
             [bb-excel.core :refer [get-sheets get-sheet-names get-sheet
-                                   get-range 
+                                   get-range
                                    ; get-row get-col get-cells crange
-                                   ]]))
+                                   ]])
+  (:import [java.util.zip ZipFile]))
+
+(deftest zipfile-or-nil-test
+  (let [zipfile-or-nil #'bb-excel.core/zipfile-or-nil]
+    (let [file (io/file "test/data/simple.xlsx")]
+      (is (instance? ZipFile (zipfile-or-nil file))))
+    (let [filepath "test/data/simple.xlsx"]
+      (is (instance? ZipFile (zipfile-or-nil filepath))))
+    (is (nil? (zipfile-or-nil "invalid-file-path")))
+    (is (nil? (zipfile-or-nil :invalid-type)))))
 
 (deftest get-sheet-names-test
   (testing "Get Sheet Names"
@@ -36,11 +47,11 @@
     (is (nil? (get-sheet-names nil))
         "Filename was not passed in")
     (is (= '({:_r 10 :A "9" :B "TextData"})
-            (get-range (get-sheet "test/data/Types.xlsx" "Sheet1") "A10:B10")))))
+           (get-range (get-sheet "test/data/Types.xlsx" "Sheet1") "A10:B10")))))
 
 (comment
   (run-tests)
-  
+
   (->>
    (get-sheets "test/data/Types.xlsx")
    second

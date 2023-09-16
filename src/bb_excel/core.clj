@@ -1,17 +1,18 @@
 (ns bb-excel.core
   (:require [clojure.data.xml  :refer [parse-str]]
-            [clojure.java.io   :refer [file]]
+            [clojure.java.io   :as io]
             [clojure.set       :refer [rename-keys]])
-  (:import [java.time LocalDate Month]
+  (:import [java.io File]
            [java.text SimpleDateFormat]
+           [java.time LocalDate Month]
            [java.time.format DateTimeFormatter]
            [java.util TimeZone]
-           [java.util.zip  ZipFile])
+           (java.util.zip ZipFile))
   (:gen-class))
 
 (set! *warn-on-reflection* true)
 
-(defonce sdf (SimpleDateFormat. "HH:mm:ss"))
+(defonce ^SimpleDateFormat sdf (SimpleDateFormat. "HH:mm:ss"))
 (.setTimeZone sdf (TimeZone/getTimeZone "UTC"))
 
 (def error-codes
@@ -66,15 +67,23 @@
                  :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2FofficeDocument%2F2006%2Frelationships/id
                  :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2FofficeDocument%2Frelationships/id}})
 
+(defn- zipfile-or-nil
+  "Retrieve ZipFile object if provided `file-or-filename` point to existing file or nil"
+  [file-or-filename]
+  (when-let [^File file (condp instance? file-or-filename
+                          String (io/file file-or-filename)
+                          File file-or-filename
+                          nil)]
+    (when (.exists file)
+      (ZipFile. file))))
+
 (defn get-sheet-names
   "Retrieves a list of Sheet Names from a given Excel Spreadsheet
-   Returns nil if the file does not exist or a non-string is passed as the filename"
-  [filename]
-  (when (and (not-any? (fn [f] (f filename)) [nil? coll?])
-             (.exists (file filename)))
-    (let [^ZipFile zf (ZipFile. ^String filename)
-          wb (.getEntry zf "xl/workbook.xml")
-          ins (.getInputStream zf wb)
+   Returns nil if the file does not exist or a non-string is passed as the `file-or-filename`"
+  [file-or-filename]
+  (when-let [^ZipFile zipfile (zipfile-or-nil file-or-filename)]
+    (let [wb (.getEntry zipfile "xl/workbook.xml")
+          ins (.getInputStream zipfile wb)
           x (parse-str (slurp ins))
           y (filter #((:sheet-tag tags) (:tag %)) (xml-seq x))]
       (->> y
@@ -103,10 +112,10 @@
   [n]
   (when n (format "%.4f%%" (* 100 (parse-double (str n))))))
 
-(def dates #{"14"  "15"  "16"  "17"  "30"  "34"  "51"  
-             "52"  "53"  "55"  "56"  "58"  "165" 
-             "166" "167" "168" "169" "170" "171" "172" 
-             "173" "174" "175" "176" "177" "178" "179" 
+(def dates #{"14"  "15"  "16"  "17"  "30"  "34"  "51"
+             "52"  "53"  "55"  "56"  "58"  "165"
+             "166" "167" "168" "169" "170" "171" "172"
+             "173" "174" "175" "176" "177" "178" "179"
              "180" "181" "184" "185" "186" "187"})
 
 (def times #{"164"  "18" "19" "21" "20"  "45" "46" "47"})
@@ -159,10 +168,9 @@
 
 (defn get-unique-strings
   "Get dictionary of all unique strings in the Excel spreadsheet"
-  [filename]
-  (let [zf (ZipFile. ^String filename)
-        wb (.getEntry zf (str "xl/sharedStrings.xml"))
-        ins (.getInputStream zf wb)
+  [^ZipFile zipfile]
+  (let [wb (.getEntry zipfile (str "xl/sharedStrings.xml"))
+        ins (.getInputStream zipfile wb)
         x (parse-str (slurp ins))]
     (->>
      (filter #((:text-part tags) (:tag %)) (xml-seq x))
@@ -171,10 +179,9 @@
 
 (defn get-styles
   "Get styles"
-  [filename]
-  (let [zf  (ZipFile. ^String filename)
-        wb  (.getEntry zf (str "xl/styles.xml"))
-        ins (.getInputStream zf wb)
+  [^ZipFile zipfile]
+  (let [wb  (.getEntry zipfile (str "xl/styles.xml"))
+        ins (.getInputStream zipfile wb)
         x   (parse-str (slurp ins))]
     (->> x
          xml-seq
@@ -228,16 +235,17 @@
               (map #(rename-keys % h) dx))]
      (if (empty? cols) dy (map #(select-keys % cols) dy)))))
 
+
 (defn get-sheets
   "Get all or specified sheet from the excel spreadsheet"
-  ([filename]
-   (get-sheets filename {}))
-  ([filename options]
-   (let [sns  (get-sheet-names filename)
+  ([file-or-filename]
+   (get-sheets file-or-filename {}))
+  ([file-or-filename options]
+   (let [sns  (get-sheet-names file-or-filename)
          sxs  (if (:sheet options) (filter #(= (:sheet options) (:name %)) sns) sns)
          res  (if (empty? sxs) [{:sheet []}]
                   (map #(assoc % :sheet
-                               (try (get-sheet filename (:name %) options)
+                               (try (get-sheet file-or-filename (:name %) options)
                                     (catch Exception ex [(bean ex)]))) sxs))]
      res)))
 
