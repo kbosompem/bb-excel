@@ -186,9 +186,11 @@
 
 (defn get-sheet
   "Get sheet from file"
-  ([filename sheetname]
-   (get-sheet filename sheetname {}))
-  ([filename sheetname options]
+  ([filename]
+   (get-sheet filename 1 {}))
+  ([filename sheetname-or-idx]
+   (get-sheet filename sheetname-or-idx {}))
+  ([filename sheetname-or-idx options]
    (let [opts    (merge defaults options)
          row     (:row opts)
          hdr     (:hdr opts)
@@ -196,7 +198,16 @@
          rows    (:rows opts)
          fxn     (:fxn opts)
          cols    (map fxn (:columns opts))
-         sheetid (:idx (first (filter #(= sheetname (:name %)) (get-sheet-names filename))))
+         sheetid (cond
+                   (string? sheetname-or-idx)
+                   (:idx (first (filter #(= sheetname-or-idx (:name %)) (get-sheet-names filename))))
+
+                   (and (integer? sheetname-or-idx) (pos? sheetname-or-idx))
+                   sheetname-or-idx
+
+                   :else
+                   (let [message (format "Attr 'sheetname-or-idx' can only be string or positive number, but passed '%s'" sheetname-or-idx)]
+                     (throw (ex-info message {}))))
          zf      (ZipFile. ^String filename)
          wb      (.getEntry zf (str "xl/worksheets/sheet" sheetid ".xml"))
          ins     (.getInputStream zf wb)
