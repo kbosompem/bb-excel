@@ -38,13 +38,17 @@ In the first example below we pull data from a specific sheet within the workboo
 #!/usr/bin/env bb
 (require '[babashka.deps :as deps])
 (deps/add-deps 
-  '{:deps {com.github.kbosompem/bb-excel {:mvn/version "0.0.5"}}}) 
+  '{:deps {com.github.kbosompem/bb-excel {:mvn/version "0.0.6"}}})
 
 (ns demo
-  (:require [clojure.pprint :refer [print-table pprint]]
+  (:require [clojure.java.io :as io]
+            [clojure.pprint :refer [print-table pprint]]
             [bb-excel.core  :refer [get-sheet get-sheets]]))
 
+;; To specify file can use either filename or file object
+;; To specify sheet can use either sheetname or sheet index(started form 1)
 (get-sheet "test/data/simple.xlsx" "Shows" )
+(get-sheet (io/file "test/data/simple.xlsx") 1)
 
 ;=>
 ({:_r 2, :A 1.0, :B "Sesame Street"}
