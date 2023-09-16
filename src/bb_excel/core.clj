@@ -12,7 +12,7 @@
 
 (set! *warn-on-reflection* true)
 
-(defonce sdf (SimpleDateFormat. "HH:mm:ss"))
+(defonce ^SimpleDateFormat sdf (SimpleDateFormat. "HH:mm:ss"))
 (.setTimeZone sdf (TimeZone/getTimeZone "UTC"))
 
 (def error-codes
