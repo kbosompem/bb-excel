@@ -223,7 +223,7 @@
                 (take rows (map #(rename-keys % h) dx))
                 (map #(rename-keys % h) dx))]
        (if (empty? cols) dy (map #(select-keys % cols) dy)))
-     (let [message (format "Attr 'file-or-filename' contains value not suitable for creating a ZipFile object: '%s'" file-or-filename)]
+     (let [message (format "Attr 'file-or-filename' contains value not suitable for creating ZipFile: '%s'" file-or-filename)]
        (throw (ex-info message {}))))))
 
 (defn get-sheets
