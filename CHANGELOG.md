@@ -1,6 +1,13 @@
 # Changelog
 
+0.0.6 / 2023-09-16
+------------------
+- Changed
+    - Added possibility to pass file object
+    - Added possibility use sheet index
+
 0.0.5 / 2023-08-04
+------------------
 - Changed
     - Fixed parse-range
 
