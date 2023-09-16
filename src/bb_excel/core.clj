@@ -192,39 +192,49 @@
          (mapv (comp :numFmtId :attrs)))))
 
 (defn get-sheet
-  "Get sheet from file or filename"
-  ([file-or-filename sheetname]
-   (get-sheet file-or-filename sheetname {}))
-  ([file-or-filename sheetname options]
-   (if-let [^ZipFile zipfile (zipfile-or-nil file-or-filename)]
-     (let [opts    (merge defaults options)
-           row     (:row opts)
-           hdr     (:hdr opts)
-           row     (if (and hdr (zero? row)) 1 row)
-           rows    (:rows opts)
-           fxn     (:fxn opts)
-           cols    (map fxn (:columns opts))
-           sheetid (:idx (first (filter #(= sheetname (:name %)) (get-sheet-names file-or-filename))))
-           wb      (.getEntry zipfile (str "xl/worksheets/sheet" sheetid ".xml"))
-           ins     (.getInputStream zipfile wb)
-           dict    (get-unique-strings zipfile)
-           styles  (get-styles zipfile)
-           xx      (slurp ins)
-           x       (parse-str xx)
-           d       (->>  x :content
-                         (filter #((:sheet-data tags) (:tag %)))
-                         first :content
-                         (map :content)
-                         (take rows)
-                         (map (partial process-row dict styles)))
-           dx (remove #(= row (:_r %)) d)
-           h (when hdr (merge (update-vals (first (filter #(= (:_r %) row) d)) fxn) {:_r :_r}))
-           dy (if (pos? rows)
-                (take rows (map #(rename-keys % h) dx))
-                (map #(rename-keys % h) dx))]
-       (if (empty? cols) dy (map #(select-keys % cols) dy)))
-     (let [message (format "Attr 'file-or-filename' contains value not suitable for creating ZipFile: '%s'" file-or-filename)]
-       (throw (ex-info message {}))))))
+  "Get sheet from file"
+  ([filename]
+   (get-sheet filename 1 {}))
+  ([filename sheetname-or-idx]
+   (get-sheet filename sheetname-or-idx {}))
+  ([filename sheetname-or-idx options]
+   (let [opts    (merge defaults options)
+         row     (:row opts)
+         hdr     (:hdr opts)
+         row     (if (and hdr (zero? row)) 1 row)
+         rows    (:rows opts)
+         fxn     (:fxn opts)
+         cols    (map fxn (:columns opts))
+         sheetid (cond
+                   (string? sheetname-or-idx)
+                   (:idx (first (filter #(= sheetname-or-idx (:name %)) (get-sheet-names filename))))
+
+                   (and (integer? sheetname-or-idx) (pos? sheetname-or-idx))
+                   sheetname-or-idx
+
+                   :else
+                   (let [message (format "Attr 'sheetname-or-idx' can only be string or positive number, but passed '%s'" sheetname-or-idx)]
+                     (throw (ex-info message {}))))
+         zf      (ZipFile. ^String filename)
+         wb      (.getEntry zf (str "xl/worksheets/sheet" sheetid ".xml"))
+         ins     (.getInputStream zf wb)
+         dict    (get-unique-strings filename)
+         styles  (get-styles filename)
+         xx      (slurp ins)
+         x       (parse-str xx)
+         d       (->>  x :content
+                       (filter #((:sheet-data tags) (:tag %)))
+                       first :content
+                       (map :content)
+                       (take rows)
+                       (map (partial process-row dict styles)))
+         dx (remove #(= row (:_r %)) d)
+         h (when hdr (merge (update-vals (first (filter #(= (:_r %) row) d)) fxn) {:_r :_r}))
+         dy (if (pos? rows)
+              (take rows (map #(rename-keys % h) dx))
+              (map #(rename-keys % h) dx))]
+     (if (empty? cols) dy (map #(select-keys % cols) dy)))))
+
 
 (defn get-sheets
   "Get all or specified sheet from the excel spreadsheet"
