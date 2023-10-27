@@ -18,3 +18,4 @@ pom.xml.asc
 settings.xml
 settings2.xml
 .DS_Store
+.idea
