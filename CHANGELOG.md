@@ -1,5 +1,11 @@
 # Changelog
 
+0.0.7 / 2023-10-27
+------------------
+- Changed
+  - Fix parse xlsx without xl/sharedStrings.xml
+  - Fix parse cell with number and inlineStr data types
+
 0.0.6 / 2023-09-16
 ------------------
 - Changed

@@ -49,6 +49,11 @@
     (is (= '({:_r 10 :A "9" :B "TextData"})
            (get-range (get-sheet "test/data/Types.xlsx" "Sheet1") "A10:B10")))))
 
+(deftest corner-cases-test
+  (testing "Without shared files"
+    (is (= '({:_r 1, :A 1})
+           (get-sheet "test/data/without_sharedfiles.xlsx" 1)))))
+
 (comment
   (run-tests)
 
