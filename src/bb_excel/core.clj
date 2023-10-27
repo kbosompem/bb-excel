@@ -138,10 +138,13 @@
               (assoc :x row)
               (assoc :y col))]
     (cond
+      ;; Possible data types well explained here https://stackoverflow.com/a/18346273
       (= (:t u) "s")                (dissoc (assoc-in u [:d] (dict (read-string (:d u)))) :t)
       (= (:t u) "str")              (dissoc u :t)
+      (= (:t u) "inlineStr")        (dissoc u :t)
       (= (:t u) "b")                (dissoc (assoc-in u [:d] (if (= "1" (:d u)) true false)) :t)
       (= (:t u) "e")                (assoc-in u [:d] (error-codes (:d u)))
+      (= (:t u) "n")                (assoc u :d (parse-long (:d u)))
       (style-check u styles pcts)   (assoc-in u [:d] (num2pct (:d u)))
       (style-check u styles dates)  (assoc-in u [:d] (num2date (:d u)))
       (style-check u styles times)  (assoc-in u [:d] (num2time (:d u)))
@@ -169,13 +172,14 @@
 (defn get-unique-strings
   "Get dictionary of all unique strings in the Excel spreadsheet"
   [^ZipFile zipfile]
-  (let [wb (.getEntry zipfile (str "xl/sharedStrings.xml"))
-        ins (.getInputStream zipfile wb)
-        x (parse-str (slurp ins))]
-    (->>
-     (filter #((:text-part tags) (:tag %)) (xml-seq x))
-     (map get-cell-text)
-     (zipmap (range)))))
+  (if-let [wb (.getEntry zipfile (str "xl/sharedStrings.xml"))]
+    (let [ins (.getInputStream zipfile wb)
+          x (parse-str (slurp ins))]
+      (->>
+       (filter #((:text-part tags) (:tag %)) (xml-seq x))
+       (map get-cell-text)
+       (zipmap (range))))
+    {}))
 
 (defn get-styles
   "Get styles"
