@@ -1,5 +1,6 @@
 (ns bb-excel.core
-  (:require [clojure.data.xml  :refer [parse-str]]
+  (:require [clojure.string :as str]
+            [clojure.data.xml  :refer [parse-str]]
             [clojure.java.io   :as io]
             [clojure.set       :refer [rename-keys]])
   (:import [java.io File]
@@ -132,68 +133,74 @@
 
 (defn process-cell
   "Process Excel cell"
-  [dict styles coll]
-  (let [[[_ row col]] (re-seq #"([A-Z]*)([0-9]+)" (:r coll))
-        u (-> coll
-              (assoc :x row)
-              (assoc :y col))]
+  [dict styles cell]
+  (let [[_ row-index col-index] (re-matches #"([A-Z]+)([0-9]+)" (:r cell))
+        cell* (merge cell
+                     {:x row-index
+                      :y col-index})
+        cell-type (:t cell*)
+        cell-value (:d cell*)]
     (cond
-      ;; Possible data types well explained here https://stackoverflow.com/a/18346273
-      (= (:t u) "s")                (dissoc (assoc-in u [:d] (dict (read-string (:d u)))) :t)
-      (= (:t u) "str")              (dissoc u :t)
-      (= (:t u) "inlineStr")        (dissoc u :t)
-      (= (:t u) "b")                (dissoc (assoc-in u [:d] (if (= "1" (:d u)) true false)) :t)
-      (= (:t u) "e")                (assoc-in u [:d] (error-codes (:d u)))
-      (= (:t u) "n")                (assoc u :d (parse-long (:d u)))
-      (style-check u styles pcts)   (assoc-in u [:d] (num2pct (:d u)))
-      (style-check u styles dates)  (assoc-in u [:d] (num2date (:d u)))
-      (style-check u styles times)  (assoc-in u [:d] (num2time (:d u)))
-      :else u)))
+      ;; Possible cell-value types well explained here https://stackoverflow.com/a/18346273
+      (= cell-type "s")                 (assoc cell* :d (get dict (parse-long cell-value)))
+      (= cell-type "str")               cell*
+      (= cell-type "inlineStr")         cell*
+      (= cell-type "b")                 (assoc cell* :d (if (= "1" cell-value) true false))
+      (= cell-type "e")                 (assoc cell* :d (get error-codes cell-value))
+      (= cell-type "n")                 (assoc cell* :d (parse-long cell-value))
+      (style-check cell* styles pcts)   (assoc cell* :d (num2pct cell-value))
+      (style-check cell* styles dates)  (assoc cell* :d (num2date cell-value))
+      (style-check cell* styles times)  (assoc cell* :d (num2time cell-value))
+      :else cell*)))
+
+(defn- get-row-index
+  [row]
+  (parse-long (:y row)))
 
 (defn process-row
   "Process Excel row of data"
-  [dict styles coll]
-  (reduce #(merge % {:_r (read-string (:y %2)) (keyword (:x %2)) (:d %2)}) {}
-          (map (partial process-cell dict styles)
-               (map #(merge (first %) {:d (second %)}
-                            {:f (nth % 2)})
-                    (map (juxt :attrs
-                               (comp last :content last :content)
-                               (comp first :content first :content)) coll)))))
+  [dict styles row]
+  (let [row* (->> row
+                  (map (fn [cell] (merge (:attrs cell)
+                                         {:d (-> cell :content last :content last)})))
+                  (map (partial process-cell dict styles)))
+        row-index (get-row-index (first row*))]
+    (into {:_r row-index} (map #(-> [(keyword (:x %)) (:d %)]))
+          row*)))
 
 (defn- get-cell-text
-  "Extract "
-  [coll]
-  (apply str
-         (mapcat :content
-                 (filter #((:text-t tags) (:tag %))
-                         (xml-seq coll)))))
+  "Extract text from cell"
+  [cell]
+  (->> (xml-seq cell)
+       (filter #(contains? (:text-t tags) (:tag %)))
+       (mapcat :content)
+       (str/join)))
 
 (defn get-unique-strings
   "Get dictionary of all unique strings in the Excel spreadsheet"
   [^ZipFile zipfile]
-  (if-let [wb (.getEntry zipfile (str "xl/sharedStrings.xml"))]
+  (if-let [wb (.getEntry zipfile "xl/sharedStrings.xml")]
     (let [ins (.getInputStream zipfile wb)
           x (parse-str (slurp ins))]
-      (->>
-       (filter #((:text-part tags) (:tag %)) (xml-seq x))
-       (map get-cell-text)
-       (zipmap (range))))
+      (->> (xml-seq x)
+           (filter #((:text-part tags) (:tag %)))
+           (map get-cell-text)
+           (zipmap (range))))
     {}))
 
 (defn get-styles
   "Get styles"
   [^ZipFile zipfile]
-  (let [wb  (.getEntry zipfile (str "xl/styles.xml"))
-        ins (.getInputStream zipfile wb)
-        x   (parse-str (slurp ins))]
-    (->> x
-         xml-seq
-         (filter #((:cellxfs tags) (:tag %)))
-         first
-         :content
-         (filter #((:xf tags) (:tag %)))
-         (mapv (comp :numFmtId :attrs)))))
+  (if-let [wb (.getEntry zipfile "xl/styles.xml")]
+    (let [ins (.getInputStream zipfile wb)
+          x   (parse-str (slurp ins))]
+      (->> (xml-seq x)
+           (filter #((:cellxfs tags) (:tag %)))
+           first
+           :content
+           (filter #((:xf tags) (:tag %)))
+           (mapv (comp :numFmtId :attrs))))
+    []))
 
 (defn get-sheet
   "Get sheet from file or filename"
@@ -226,7 +233,7 @@
            styles  (get-styles zipfile)
            xx      (slurp ins)
            x       (parse-str xx)
-           d       (->>  x :content
+           d       (->>  (:content x)
                          (filter #((:sheet-data tags) (:tag %)))
                          first :content
                          (map :content)
@@ -274,7 +281,7 @@
 (defn parse-range
   "Takes in an Excel coordinate and returns a hashmap of rows and columns to pull"
   [s]
-  (let [[[_ osc osr oec oer]] (re-seq #"([A-Z]+)([0-9]*)[:]?([A-Z]*)([0-9]*)" s)
+  (let [[_ osc osr oec oer] (re-matches #"([A-Z]+)([0-9]*)[:]?([A-Z]*)([0-9]*)" s)
         sc (or osc "A")
         ec (or (when-str oec) (when-str osc) sc)
         sr (or (when-num osr) 1)
