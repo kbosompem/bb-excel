@@ -68,6 +68,11 @@
                  :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2FofficeDocument%2F2006%2Frelationships/id
                  :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2FofficeDocument%2Frelationships/id}})
 
+(def ^:const SHEET_TAG_TAGS (:sheet-tag tags))
+(def ^:const TEXT_PART_TAGS (:text-part tags))
+(def ^:const TEXT_T_TAGS (:text-t tags))
+(def ^:const SHEET_DATA_TAGS (:sheet-data tags))
+
 (defn- zipfile-or-nil
   "Retrieve ZipFile object if provided `file-or-filename` point to existing file or nil"
   [file-or-filename]
@@ -86,7 +91,7 @@
     (let [wb (.getEntry zipfile "xl/workbook.xml")
           ins (.getInputStream zipfile wb)
           x (parse-str (slurp ins))
-          y (filter #((:sheet-tag tags) (:tag %)) (xml-seq x))]
+          y (filter #(contains? SHEET_TAG_TAGS (:tag %)) (xml-seq x))]
       (->> y
            first
            :content
@@ -133,7 +138,7 @@
 
 (defn process-cell
   "Process Excel cell"
-  [dict styles cell]
+  [shared-strings styles cell]
   (let [[_ row-index col-index] (re-matches #"([A-Z]+)([0-9]+)" (:r cell))
         cell* (merge cell
                      {:x row-index
@@ -142,7 +147,7 @@
         cell-value (:d cell*)]
     (cond
       ;; Possible cell-value types well explained here https://stackoverflow.com/a/18346273
-      (= cell-type "s")                 (assoc cell* :d (get dict (parse-long cell-value)))
+      (= cell-type "s")                 (assoc cell* :d (nth shared-strings (parse-long cell-value)))
       (= cell-type "str")               cell*
       (= cell-type "inlineStr")         cell*
       (= cell-type "b")                 (assoc cell* :d (if (= "1" cell-value) true false))
@@ -159,11 +164,11 @@
 
 (defn process-row
   "Process Excel row of data"
-  [dict styles row]
+  [shared-strings styles row]
   (let [row* (->> row
                   (map (fn [cell] (merge (:attrs cell)
                                          {:d (-> cell :content last :content last)})))
-                  (map (partial process-cell dict styles)))
+                  (map (partial process-cell shared-strings styles)))
         row-index (get-row-index (first row*))]
     (into {:_r row-index} (map #(-> [(keyword (:x %)) (:d %)]))
           row*)))
@@ -172,21 +177,20 @@
   "Extract text from cell"
   [cell]
   (->> (xml-seq cell)
-       (filter #(contains? (:text-t tags) (:tag %)))
+       (filter #(contains? TEXT_T_TAGS (:tag %)))
        (mapcat :content)
        (str/join)))
 
-(defn get-unique-strings
+(defn get-shared-strings
   "Get dictionary of all unique strings in the Excel spreadsheet"
   [^ZipFile zipfile]
   (if-let [wb (.getEntry zipfile "xl/sharedStrings.xml")]
     (let [ins (.getInputStream zipfile wb)
           x (parse-str (slurp ins))]
-      (->> (xml-seq x)
-           (filter #((:text-part tags) (:tag %)))
-           (map get-cell-text)
-           (zipmap (range))))
-    {}))
+      (into [] (comp (filter #(contains? TEXT_PART_TAGS (:tag %)))
+                     (map get-cell-text))
+            (xml-seq x)))
+    []))
 
 (defn get-styles
   "Get styles"
@@ -229,16 +233,16 @@
                        (throw (ex-info message {}))))
            wb      (.getEntry zipfile (str "xl/worksheets/sheet" sheetid ".xml"))
            ins     (.getInputStream zipfile wb)
-           dict    (get-unique-strings zipfile)
+           shared-strings (get-shared-strings zipfile)
            styles  (get-styles zipfile)
            xx      (slurp ins)
            x       (parse-str xx)
            d       (->>  (:content x)
-                         (filter #((:sheet-data tags) (:tag %)))
+                         (filter #(contains? SHEET_DATA_TAGS (:tag %)))
                          first :content
                          (map :content)
                          (take rows)
-                         (map (partial process-row dict styles)))
+                         (map (partial process-row shared-strings styles)));
            dx (remove #(= row (:_r %)) d)
            h (when hdr (merge (update-vals (first (filter #(= (:_r %) row) d)) fxn) {:_r :_r}))
            dy (if (pos? rows)
@@ -322,7 +326,7 @@
   "Get range of values returned as list of rows"
   [sheet rows cols]
   (map #(select-keys % cols)
-       (filter #((set rows) (:_r %)) sheet)))
+       (filter #(contains? (set rows) (:_r %)) sheet)))
 
 (defn get-range
   "Get range of values using Excel cell coordinates

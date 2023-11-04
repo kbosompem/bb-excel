@@ -4,7 +4,7 @@
 ------------------
 - Changed
     - Fix parse xlsx without xl/styles.xml
-    - Refactoring
+    - Refactoring and optimizations
 
 0.0.7 / 2023-10-27
 ------------------
