@@ -1,5 +1,11 @@
 # Changelog
 
+0.0.9 / 2023-11-12
+------------------
+- Changed
+  - Fix support for missing cell reference
+  - Refactoring and optimizations
+
 0.0.8 / 2023-11-03
 ------------------
 - Changed
