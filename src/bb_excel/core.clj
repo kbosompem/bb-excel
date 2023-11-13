@@ -1,14 +1,15 @@
 (ns bb-excel.core
-  (:require [clojure.string :as str]
-            [clojure.data.xml  :refer [parse-str]]
-            [clojure.java.io   :as io]
-            [clojure.set       :refer [rename-keys]])
-  (:import [java.io File]
-           [java.text SimpleDateFormat]
-           [java.time LocalDate Month]
-           [java.time.format DateTimeFormatter]
-           [java.util TimeZone]
-           (java.util.zip ZipFile))
+  (:require [bb-excel.util :refer [by-tag find-first throw-ex]]
+            [clojure.data.xml :as xml]
+            [clojure.java.io :as io]
+            [clojure.set :refer [rename-keys]]
+            [clojure.string :as str])
+  (:import (java.io File)
+           (java.text SimpleDateFormat)
+           (java.time LocalDate Month)
+           (java.time.format DateTimeFormatter)
+           (java.util TimeZone)
+           (java.util.zip ZipEntry ZipFile))
   (:gen-class))
 
 (set! *warn-on-reflection* true)
@@ -33,74 +34,43 @@
    :fxn  function :-  Which function to use parse header rows
    :rows integer  :-  Number of rows to extract
    :hdr  boolean  :- Rename columns with data from the first row"
-  {:row 0 :fxn str :rows 10000 :hdr false})
+  {:row 0
+   :fxn str
+   :rows 10000
+   :hdr false})
 
-(def tags
-  "Map of Excel XML namespaces of interest"
-  {:sheet-tag  #{:sheets
-                 :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/sheets
-                 :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/sheets}
-   :row-tag    #{:row
-                 :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/row
-                 :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/row}
-   :text-part   #{:si
-                  :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/si
-                  :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/si}
-   :numFmts   #{:numFmts
-                :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/numFmts
-                :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/numFmts}
-   :cellxfs   #{:cellXfs
-                :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/cellXfs
-                :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/cellXfs}
-   :xf   #{:xf
-           :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/xf
-           :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/xf}
-   :text-t   #{:t
-               :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/t
-               :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/t}
-   :text-r   #{:r
-               :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/r
-               :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/r}
-   :sheet-data #{:sheetData
-                 :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2Fspreadsheetml%2F2006%2Fmain/sheetData
-                 :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2Fspreadsheetml%2Fmain/sheetData}
-   :sheet-id   #{:id
-                 :xmlns.http%3A%2F%2Fschemas.openxmlformats.org%2FofficeDocument%2F2006%2Frelationships/id
-                 :xmlns.http%3A%2F%2Fpurl.oclc.org%2Fooxml%2FofficeDocument%2Frelationships/id}})
-
-(def ^:const SHEET_TAG_TAGS (:sheet-tag tags))
-(def ^:const TEXT_PART_TAGS (:text-part tags))
-(def ^:const TEXT_T_TAGS (:text-t tags))
-(def ^:const SHEET_DATA_TAGS (:sheet-data tags))
-
-(defn- zipfile-or-nil
-  "Retrieve ZipFile object if provided `file-or-filename` point to existing file or nil"
+(defn- get-zipfile
+  "Retrieve ZipFile object if provided `file-or-filename` point to existing file."
   [file-or-filename]
   (when-let [^File file (condp instance? file-or-filename
                           String (io/file file-or-filename)
                           File file-or-filename
-                          nil)]
-    (when (.exists file)
-      (ZipFile. file))))
+                          (throw-ex (format "Could not open '%s'! Argument should be string or file." file-or-filename)))]
+    (if (.exists file)
+      (ZipFile. file)
+      (throw-ex (format "Could not open '%s'! File does not exist." file-or-filename)))))
+
+(defn get-sheet-names*
+  [^ZipFile zipfile]
+  (if-let [workbook-entry (.getEntry zipfile "xl/workbook.xml")]
+    (with-open [workbook (.getInputStream zipfile workbook-entry)]
+      (let [workbook-node (xml/parse workbook {:namespace-aware false})
+            sheets-node (->> (:content workbook-node)
+                             (find-first (by-tag :sheets)))
+            sheet-nodes (->> (:content sheets-node)
+                             (filter (by-tag :sheet)))]
+        (into [] (comp (map :attrs)
+                       (map #(select-keys % [:sheetId :name]))
+                       (map #(update % :sheetId parse-long))
+                       (map #(rename-keys % {:sheetId :idx})))
+              sheet-nodes)))
+    []))
 
 (defn get-sheet-names
-  "Retrieves a list of Sheet Names from a given Excel Spreadsheet
-   Returns nil if the file does not exist or a non-string is passed as the `file-or-filename`"
+  "Retrieves a list of Sheet Names from a given Excel Spreadsheet"
   [file-or-filename]
-  (when-let [^ZipFile zipfile (zipfile-or-nil file-or-filename)]
-    (let [wb (.getEntry zipfile "xl/workbook.xml")
-          ins (.getInputStream zipfile wb)
-          x (parse-str (slurp ins))
-          y (filter #(contains? SHEET_TAG_TAGS (:tag %)) (xml-seq x))]
-      (->> y
-           first
-           :content
-           (map :attrs)
-           (map-indexed #(select-keys
-                          (rename-keys
-                           (assoc %2 :idx (inc %))
-                           (zipmap (:sheet-id tags) (repeat :id)))
-                          [:id :name :sheetId :idx]))))))
+  (let [^ZipFile zipfile (get-zipfile file-or-filename)]
+    (get-sheet-names* zipfile)))
 
 (defn num2date
   "Format Excel Date"
@@ -130,81 +100,141 @@
 
 (defn style-check
   "Check if the style id is within a range."
-  [coll styles ids]
-  (when (:s coll)
+  [cell-attrs styles ids]
+  (when (:s cell-attrs)
     (try
-      (ids (styles (parse-long (:s coll))))
+      (ids (styles (parse-long (:s cell-attrs))))
       (catch Exception _ false))))
 
-(defn process-cell
-  "Process Excel cell"
+
+(defn extract-cell-value
+  "Possible cell-value types well explained here https://stackoverflow.com/a/18346273"
   [shared-strings styles cell]
-  (let [[_ row-index col-index] (re-matches #"([A-Z]+)([0-9]+)" (:r cell))
-        cell* (merge cell
-                     {:x row-index
-                      :y col-index})
-        cell-type (:t cell*)
-        cell-value (:d cell*)]
+  (let [raw-cell-value (-> cell :content last :content last)
+        cell-attrs (:attrs cell)
+        cell-type (:t cell-attrs)]
     (cond
-      ;; Possible cell-value types well explained here https://stackoverflow.com/a/18346273
-      (= cell-type "s")                 (assoc cell* :d (nth shared-strings (parse-long cell-value)))
-      (= cell-type "str")               cell*
-      (= cell-type "inlineStr")         cell*
-      (= cell-type "b")                 (assoc cell* :d (if (= "1" cell-value) true false))
-      (= cell-type "e")                 (assoc cell* :d (get error-codes cell-value))
-      (= cell-type "n")                 (assoc cell* :d (parse-long cell-value))
-      (style-check cell* styles pcts)   (assoc cell* :d (num2pct cell-value))
-      (style-check cell* styles dates)  (assoc cell* :d (num2date cell-value))
-      (style-check cell* styles times)  (assoc cell* :d (num2time cell-value))
-      :else cell*)))
-
-(defn- get-row-index
-  [row]
-  (parse-long (:y row)))
-
-(defn process-row
-  "Process Excel row of data"
-  [shared-strings styles row]
-  (let [row* (->> row
-                  (map (fn [cell] (merge (:attrs cell)
-                                         {:d (-> cell :content last :content last)})))
-                  (map (partial process-cell shared-strings styles)))
-        row-index (get-row-index (first row*))]
-    (into {:_r row-index} (map #(-> [(keyword (:x %)) (:d %)]))
-          row*)))
+      (= cell-type "s")                 (nth shared-strings (parse-long raw-cell-value))
+      (= cell-type "str")               raw-cell-value
+      (= cell-type "inlineStr")         raw-cell-value
+      (= cell-type "b")                 (if (= "1" raw-cell-value) true false)
+      (= cell-type "e")                 (get error-codes raw-cell-value)
+      (= cell-type "n")                 (parse-long raw-cell-value)
+      (style-check cell-attrs styles pcts)    (num2pct raw-cell-value)
+      (style-check cell-attrs styles dates)   (num2date raw-cell-value)
+      (style-check cell-attrs styles times)   (num2time raw-cell-value)
+      :else raw-cell-value)))
 
 (defn- get-cell-text
   "Extract text from cell"
   [cell]
   (->> (xml-seq cell)
-       (filter #(contains? TEXT_T_TAGS (:tag %)))
+       (filter (by-tag :t))
        (mapcat :content)
        (str/join)))
 
 (defn get-shared-strings
   "Get dictionary of all unique strings in the Excel spreadsheet"
   [^ZipFile zipfile]
-  (if-let [wb (.getEntry zipfile "xl/sharedStrings.xml")]
-    (let [ins (.getInputStream zipfile wb)
-          x (parse-str (slurp ins))]
-      (into [] (comp (filter #(contains? TEXT_PART_TAGS (:tag %)))
-                     (map get-cell-text))
-            (xml-seq x)))
+  (if-let [shared-strings-entry (.getEntry zipfile "xl/sharedStrings.xml")]
+    (with-open [shared-strings (.getInputStream zipfile shared-strings-entry)]
+      (let [sst-node (xml/parse shared-strings {:namespace-aware false})]
+        (mapv get-cell-text (:content sst-node))))
     []))
 
 (defn get-styles
-  "Get styles"
   [^ZipFile zipfile]
-  (if-let [wb (.getEntry zipfile "xl/styles.xml")]
-    (let [ins (.getInputStream zipfile wb)
-          x   (parse-str (slurp ins))]
-      (->> (xml-seq x)
-           (filter #((:cellxfs tags) (:tag %)))
-           first
-           :content
-           (filter #((:xf tags) (:tag %)))
-           (mapv (comp :numFmtId :attrs))))
+  (if-let [styles-entry (.getEntry zipfile "xl/styles.xml")]
+    (with-open [styles (.getInputStream zipfile styles-entry)]
+      (let [style-sheet-node (xml/parse styles {:namespace-aware false})
+            cell-xfs-node (->> (:content style-sheet-node)
+                               (find-first (by-tag :cellXfs)))
+            xf-nodes (->> (:content cell-xfs-node)
+                          (filter (by-tag :xf)))]
+        (mapv #(-> % :attrs :numFmtId) xf-nodes)))
     []))
+
+(def ^:const BASE_ROW_INDEX 0)
+(def ^:const BASE_COLUMN_INDEX 0)
+
+(defn valid-cell-index?
+  [cell-index]
+  (if cell-index
+    (boolean (re-find #"^[A-Z]{1,3}\d+$" cell-index))
+    false))
+
+(def ^:const A_CHAR_INDEX (int \A))
+
+(defn number->column-letter
+  [n]
+  (loop [num n
+         acc ""]
+    (if (> num 0)
+      (let [residue (mod (dec num) 26)
+            new-num (quot (dec num) 26)]
+        (recur new-num (str (char (+ residue A_CHAR_INDEX)) acc)))
+      acc)))
+
+(defn get-col-index
+  "Self-calculated index is used only if cell-index attribute(:r) is missing on the cell"
+  [cell last-processed-col-index]
+  (let [cell-index (-> cell :attrs :r)]
+    (if (valid-cell-index? cell-index)
+      (re-find #"[A-Z]{1,3}" cell-index)
+      (-> last-processed-col-index
+          (inc)
+          (number->column-letter)))))
+
+(defn process-row
+  "Process Excel row of data"
+  [shared-strings styles row]
+  (->> (:content row)
+       (reduce (fn [{:keys [row-data last-processed-col-index]} cell]
+                 (let [col-index (get-col-index cell last-processed-col-index)
+                       cell-value (extract-cell-value shared-strings styles cell)]
+                   {:row-data (assoc row-data (keyword col-index) cell-value)
+                    :last-processed-col-index col-index}))
+               {:row-data {}
+                :last-processed-col-index BASE_COLUMN_INDEX})
+       (:row-data)))
+
+(defn process-rows
+  [shared-strings styles last-processed-row-index rows]
+  (lazy-seq
+   (when rows
+     (let [row (first rows)
+           row-index (or (some-> row :attrs :r parse-long)
+                         (inc last-processed-row-index))
+           processed-row (process-row shared-strings styles row)]
+       (cons (assoc processed-row
+                    :_r row-index)
+             (process-rows shared-strings
+                           styles
+                           row-index
+                           (next rows)))))))
+
+(defn get-and-check-sheet-id
+  [^ZipFile zipfile sheetname-or-idx]
+  (let [sheets (get-sheet-names* zipfile)
+
+        found-sheet
+        (find-first (fn [sheet]
+                      (cond
+                        (string? sheetname-or-idx)
+                        (= (str/lower-case sheetname-or-idx)
+                           (str/lower-case (:name sheet)))
+
+                        (and (integer? sheetname-or-idx)
+                             (pos? sheetname-or-idx))
+                        (= sheetname-or-idx (:idx sheet))))
+                    sheets)]
+    (or (:idx found-sheet)
+        (throw-ex (format "Could not find sheet with name or index equal '%s'! Sheet does not exist." sheetname-or-idx)))))
+
+(defn get-sheet-entry
+  [^ZipFile zipfile ^long sheet-id]
+  (or (.getEntry zipfile (str "xl/worksheets/sheet" sheet-id ".xml"))
+      (throw-ex (format "Could not find sheet with sheet-id equal '%s'! Sheet data file does not exist." sheet-id))))
 
 (defn get-sheet
   "Get sheet from file or filename"
@@ -213,7 +243,9 @@
   ([file-or-filename sheetname-or-idx]
    (get-sheet file-or-filename sheetname-or-idx {}))
   ([file-or-filename sheetname-or-idx options]
-   (if-let [^ZipFile zipfile (zipfile-or-nil file-or-filename)]
+   (let [^ZipFile zipfile (get-zipfile file-or-filename)
+         ^long sheet-id (get-and-check-sheet-id zipfile sheetname-or-idx)
+         ^ZipEntry sheet-entry (get-sheet-entry zipfile sheet-id)]
      (let [opts    (merge defaults options)
            row     (:row opts)
            hdr     (:hdr opts)
@@ -221,36 +253,25 @@
            rows    (:rows opts)
            fxn     (:fxn opts)
            cols    (map fxn (:columns opts))
-           sheetid (cond
-                     (string? sheetname-or-idx)
-                     (:idx (first (filter #(= sheetname-or-idx (:name %)) (get-sheet-names file-or-filename))))
-
-                     (and (integer? sheetname-or-idx) (pos? sheetname-or-idx))
-                     sheetname-or-idx
-
-                     :else
-                     (let [message (format "Attr 'sheetname-or-idx' can only be string or positive number, but passed '%s'" sheetname-or-idx)]
-                       (throw (ex-info message {}))))
-           wb      (.getEntry zipfile (str "xl/worksheets/sheet" sheetid ".xml"))
-           ins     (.getInputStream zipfile wb)
            shared-strings (get-shared-strings zipfile)
-           styles  (get-styles zipfile)
-           xx      (slurp ins)
-           x       (parse-str xx)
-           d       (->>  (:content x)
-                         (filter #(contains? SHEET_DATA_TAGS (:tag %)))
-                         first :content
-                         (map :content)
-                         (take rows)
-                         (map (partial process-row shared-strings styles)));
-           dx (remove #(= row (:_r %)) d)
-           h (when hdr (merge (update-vals (first (filter #(= (:_r %) row) d)) fxn) {:_r :_r}))
-           dy (if (pos? rows)
-                (take rows (map #(rename-keys % h) dx))
-                (map #(rename-keys % h) dx))]
-       (if (empty? cols) dy (map #(select-keys % cols) dy)))
-     (let [message (format "Attr 'file-or-filename' contains value not suitable for creating ZipFile: '%s'" file-or-filename)]
-       (throw (ex-info message {}))))))
+           styles  (get-styles zipfile)]
+       (with-open [sheet (.getInputStream zipfile sheet-entry)]
+         (let [worksheet-node (xml/parse sheet {:namespace-aware false})
+               sheet-data-node (->> (:content worksheet-node)
+                                    (find-first (by-tag :sheetData)))
+               row-nodes (:content sheet-data-node)
+               d (->> row-nodes
+                      (take rows)
+                      (process-rows shared-strings
+                                    styles
+                                    BASE_ROW_INDEX))
+               dx (remove #(= row (:_r %)) d)
+               h (when hdr (merge (update-vals (first (filter #(= (:_r %) row) d)) fxn)
+                                  {:_r :_r}))
+               dy (if (pos? rows)
+                    (take rows (mapv #(rename-keys % h) dx))
+                    (mapv #(rename-keys % h) dx))]
+           (if (empty? cols) dy (mapv #(select-keys % cols) dy))))))))
 
 
 (defn get-sheets
