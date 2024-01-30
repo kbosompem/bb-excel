@@ -2,9 +2,9 @@
 [![Clojars Project](https://img.shields.io/clojars/v/com.github.kbosompem/bb-excel.svg)](https://clojars.org/com.github.kbosompem/bb-excel)
 [![bb compatible](https://raw.githubusercontent.com/babashka/babashka/master/logo/badge.svg)](https://babashka.org)
 
-Use [**Babashka**](https://www.babashka.org) to extract data from Excel Spreadsheets!
+Use [**Babashka**](https://www.babashka.org) to work with data in Excel Spreadsheets!
 
-bb-excel is a simple [**Clojure**](https://www.clojure.org) library to extract data from Excel files without relying on the Apache POI OOXML library. See below for rationale.
+bb-excel is a simple [**Clojure**](https://www.clojure.org) library to work with data in from Excel files without relying on the Apache POI OOXML library. See below for rationale.
 
 ## Installation
 
@@ -27,7 +27,6 @@ of this library, and that features are subject to change.
 
 ## Getting started
 
-
 This library is meant for the simplest of spreadsheets.
 
 The primary function is **get-sheet** 
@@ -38,7 +37,7 @@ In the first example below we pull data from a specific sheet within the workboo
 #!/usr/bin/env bb
 (require '[babashka.deps :as deps])
 (deps/add-deps 
-  '{:deps {com.github.kbosompem/bb-excel {:mvn/version "0.0.9"}}})
+  '{:deps {com.github.kbosompem/bb-excel {:mvn/version "0.1.0"}}})
 
 (ns demo
   (:require [clojure.java.io :as io]
@@ -131,10 +130,43 @@ Now that expects a sheet so
 |   4 | 3.0 |       House M.D |
 ```
 
+## Creating Excel Spreadsheets
+To create an Excel Spreadsheet  call **create-xlsx** with a vector of maps.
+Each map represents a tab/sheet in Excel
+It requires a :name (String) and a :sheet (Vector of maps)
+There is an optional :cmap for renaming columns  
+
+
+
+```clojure
+(create-xlsx "sample.xlsx" [{:name "TestSheet"
+                             :sheet [{:A "1" :B "One"   :C "Baako"}
+                                     {:A "2" :B "Two"   :C "Mienu"}
+                                     {:A "3" :B "Three" :C "Miensa"}]}])
+```
+To validate the data was saved accurately use the get-sheet and print-table to extract and print.
+
+```clojure
+(print-table
+   (get-sheet "sample.xlsx" "TestSheet" {:hdr true})
+
+| :A |    :B |     :C | :_r |
+|----+-------+--------+-----|
+|  1 |   One |  Baako |   2 |
+|  2 |   Two |  Mienu |   3 |
+|  3 | Three | Miensa |   4 |
+```
+
+Please note that Excel is an intricate and complex file format and this library performs the most basic writes possible. Only Strings, Numbers and Dates. 
+
+No styles, formulas, lambdas,images, embeddings, tables etc can be supported. 
+
+
+
 ## Limitations
 
 1. Does not support older xls format
-2. No write planned at this moment
+2. Write is super basic and does not include styles, formulas, lambdas,images, embeddings, tables etc
 
 
 ## Rationale
@@ -142,7 +174,7 @@ Now that expects a sheet so
 Why create another excel library in clojure when you can use docjure or wrap the venerable Apache POI library.
 Answer is simple. [**Babashka**](https://www.babashka.org), my scripting language of choice does not support Apache POI.
 This library currently reads xlsx files and returns a vector of hashmaps. Each hashmap representing a row in a selected sheet.
-
+This is also experimental support for write.
 
 
 ## Recommended Alternatives

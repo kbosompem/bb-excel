@@ -1,5 +1,10 @@
 # Changelog
 
+0.1.0 / 2024-01-29
+------------------
+- Added
+  - Create basic Excel spreadsheets
+
 0.0.9 / 2023-11-12
 ------------------
 - Changed

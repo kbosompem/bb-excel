@@ -1,10 +1,9 @@
 (ns core-test
   (:require [clojure.java.io :as io]
+            [clojure.set :refer [intersection]]
             [clojure.test :refer [deftest is run-tests testing]]
             [bb-excel.core :refer [get-sheets get-sheet-names get-sheet
-                                   get-range
-                                   ; get-row get-col get-cells crange
-                                   ]])
+                                   get-range create-xlsx]])
   (:import (clojure.lang ExceptionInfo)
            [java.util.zip ZipFile]))
 
@@ -50,7 +49,7 @@
     (is (thrown-with-msg? ExceptionInfo #"Could not open 'null'! Argument should be string or file."
                           (get-sheets nil)))))
 
-(deftest get-range-test
+(deftest get-range-test 
   (testing "Get Sheet Range"
     (is (= '({:_r 1, :A "FirstName", :B "LastName"}
              {:_r 2, :A "Jack", :B "Bean"})
@@ -67,11 +66,32 @@
     (is (= '({:_r 1, :A 1})
            (get-sheet "test/data/without_sharedfiles.xlsx" 1)))))
 
+(deftest create-xlsx-test
+  (testing "Creating an Excel Spreadsheet"
+    (is (= 3 (let [d [{:name "TestSheet"
+                       :sheet [{:A "1" :B "One" :C "Baako"}
+                               {:A "2" :B "Two" :C "Mienu"}
+                               {:A "3" :B "Three" :C "Miensa"}]}]
+                   s (create-xlsx "zomb.xlsx" d)
+                   xs (get-sheets "zomb.xlsx")
+                   data  (-> xs
+                             first
+                             (dissoc :idx)
+                             :sheet
+                             (->> (map #(dissoc % :_r))))
+                   ins (clojure.set/intersection (set (:sheet (first d))) (set data))]
+              (count ins))))))
+
 (comment
   (run-tests)
+  
+  (create-xlsx "sample.xlsx"    [{:name "TestSheet"
+                                  :sheet [{:A "1" :B "One" :C "Baako"}
+                                          {:A "2" :B "Two" :C "Mienu"}
+                                          {:A "3" :B "Three" :C "Miensa"}]}])
+  To validate the data was saved
+  (clojure.pprint/print-table
+   (get-sheet "sample.xlsx" "TestSheet" {:hdr true}))
 
-  (->>
-   (get-sheets "test/data/Types.xlsx")
-   second
-   :sheet
-   clojure.pprint/print-table))
+  #{}
+  )

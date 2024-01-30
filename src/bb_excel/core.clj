@@ -1,21 +1,26 @@
 (ns bb-excel.core
   (:require [bb-excel.util :refer [by-tag find-first throw-ex]]
             [clojure.data.xml :as xml]
+            [hiccup2.core :as hc]
             [clojure.java.io :as io]
             [clojure.set :refer [rename-keys]]
             [clojure.string :as str])
-  (:import (java.io File)
-           (java.text SimpleDateFormat)
-           (java.time LocalDate Month)
-           (java.time.format DateTimeFormatter)
-           (java.util TimeZone)
-           (java.util.zip ZipEntry ZipFile))
+  (:import [java.io File FileOutputStream]
+           [java.text SimpleDateFormat]
+           [java.time LocalDate LocalDateTime Month]
+           [java.time.format DateTimeFormatter]
+           [java.time.temporal ChronoUnit]
+           [java.util TimeZone]
+           [java.util.zip ZipEntry ZipFile ZipOutputStream])
   (:gen-class))
 
 (set! *warn-on-reflection* true)
 
 (defonce ^SimpleDateFormat sdf (SimpleDateFormat. "HH:mm:ss"))
 (.setTimeZone sdf (TimeZone/getTimeZone "UTC"))
+
+(defn parse-xlong [x]
+  (parse-long (or x "")))
 
 (def error-codes
   {"#NAME?"   :bad-name
@@ -61,7 +66,7 @@
                              (filter (by-tag :sheet)))]
         (into [] (comp (map :attrs)
                        (map #(select-keys % [:sheetId :name]))
-                       (map #(update % :sheetId parse-long))
+                       (map #(update % :sheetId parse-xlong))
                        (map #(rename-keys % {:sheetId :idx})))
               sheet-nodes)))
     []))
@@ -103,7 +108,7 @@
   [cell-attrs styles ids]
   (when (:s cell-attrs)
     (try
-      (ids (styles (parse-long (:s cell-attrs))))
+      (ids (styles (parse-xlong (:s cell-attrs))))
       (catch Exception _ false))))
 
 
@@ -114,12 +119,12 @@
         cell-attrs (:attrs cell)
         cell-type (:t cell-attrs)]
     (cond
-      (= cell-type "s")                 (nth shared-strings (parse-long raw-cell-value))
+      (= cell-type "s")                 (nth shared-strings (parse-xlong raw-cell-value))
       (= cell-type "str")               raw-cell-value
-      (= cell-type "inlineStr")         raw-cell-value
+      (= cell-type "inlineStr")         (-> raw-cell-value :content last)
       (= cell-type "b")                 (if (= "1" raw-cell-value) true false)
       (= cell-type "e")                 (get error-codes raw-cell-value)
-      (= cell-type "n")                 (parse-long raw-cell-value)
+      (= cell-type "n")                 (parse-xlong raw-cell-value)
       (style-check cell-attrs styles pcts)    (num2pct raw-cell-value)
       (style-check cell-attrs styles dates)   (num2date raw-cell-value)
       (style-check cell-attrs styles times)   (num2time raw-cell-value)
@@ -180,8 +185,8 @@
   [cell last-processed-col-index]
   (let [cell-index (-> cell :attrs :r)]
     (if (valid-cell-index? cell-index)
-      (re-find #"[A-Z]{1,3}" cell-index)
-      (-> last-processed-col-index
+      (re-find #"[A-Z]{1,3}" cell-index) 
+          (-> last-processed-col-index
           (inc)
           (number->column-letter)))))
 
@@ -199,11 +204,11 @@
        (:row-data)))
 
 (defn process-rows
-  [shared-strings styles last-processed-row-index rows]
+  [shared-strings styles last-processed-row-index rows] 
   (lazy-seq
    (when rows
      (let [row (first rows)
-           row-index (or (some-> row :attrs :r parse-long)
+           row-index (or (some-> row :attrs :r parse-xlong)
                          (inc last-processed-row-index))
            processed-row (process-row shared-strings styles row)]
        (cons (assoc processed-row
@@ -216,7 +221,6 @@
 (defn get-and-check-sheet-id
   [^ZipFile zipfile sheetname-or-idx]
   (let [sheets (get-sheet-names* zipfile)
-
         found-sheet
         (find-first (fn [sheet]
                       (cond
@@ -245,33 +249,33 @@
   ([file-or-filename sheetname-or-idx options]
    (let [^ZipFile zipfile (get-zipfile file-or-filename)
          ^long sheet-id (get-and-check-sheet-id zipfile sheetname-or-idx)
-         ^ZipEntry sheet-entry (get-sheet-entry zipfile sheet-id)]
-     (let [opts    (merge defaults options)
-           row     (:row opts)
-           hdr     (:hdr opts)
-           row     (if (and hdr (zero? row)) 1 row)
-           rows    (:rows opts)
-           fxn     (:fxn opts)
-           cols    (map fxn (:columns opts))
-           shared-strings (get-shared-strings zipfile)
-           styles  (get-styles zipfile)]
-       (with-open [sheet (.getInputStream zipfile sheet-entry)]
-         (let [worksheet-node (xml/parse sheet {:namespace-aware false})
-               sheet-data-node (->> (:content worksheet-node)
-                                    (find-first (by-tag :sheetData)))
-               row-nodes (:content sheet-data-node)
-               d (->> row-nodes
-                      (take rows)
-                      (process-rows shared-strings
-                                    styles
-                                    BASE_ROW_INDEX))
-               dx (remove #(= row (:_r %)) d)
-               h (when hdr (merge (update-vals (first (filter #(= (:_r %) row) d)) fxn)
-                                  {:_r :_r}))
-               dy (if (pos? rows)
-                    (take rows (mapv #(rename-keys % h) dx))
-                    (mapv #(rename-keys % h) dx))]
-           (if (empty? cols) dy (mapv #(select-keys % cols) dy))))))))
+         ^ZipEntry sheet-entry (get-sheet-entry zipfile sheet-id)
+         opts    (merge defaults options)
+         row     (:row opts)
+         hdr     (:hdr opts)
+         row     (if (and hdr (zero? row)) 1 row)
+         rows    (:rows opts)
+         fxn     (:fxn opts)
+         cols    (map fxn (:columns opts))
+         shared-strings (get-shared-strings zipfile)
+         styles  (get-styles zipfile)]
+     (with-open [sheet (.getInputStream zipfile sheet-entry)]
+       (let [worksheet-node (xml/parse sheet {:namespace-aware false})
+             sheet-data-node (->> (:content worksheet-node)
+                                  (find-first (by-tag :sheetData)))
+             row-nodes (:content sheet-data-node)
+             d (->> row-nodes
+                    (take rows)
+                    (process-rows shared-strings
+                                  styles
+                                  BASE_ROW_INDEX))
+             dx (remove #(= row (:_r %)) d)
+             h (when hdr (merge (update-vals (first (filter #(= (:_r %) row) d)) fxn)
+                                {:_r :_r}))
+             dy (if (pos? rows)
+                  (take rows (mapv #(rename-keys % h) dx))
+                  (mapv #(rename-keys % h) dx))]
+         (if (empty? cols) dy (mapv #(select-keys % cols) dy)))))))
 
 
 (defn get-sheets
@@ -357,3 +361,121 @@
         [rs re] rows
         [cs ce] cols]
     (get-cells sheet (range rs re) (crange cs ce))))
+
+; -------------------------------------
+; EXPERIMENTAL 
+; --------------------------------------
+(def xmlh "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n")
+
+(def xlns {:xmlns       "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+           :xmlns:r     "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+           :xmlns:mx    "http://schemas.microsoft.com/office/mac/excel/2008/main"
+           :xmlns:mc    "http://schemas.openxmlformats.org/markup-compatibility/2006"
+           :xmlns:mv    "urn:schemas-microsoft-com:mac:vml"
+           :xmlns:x14   "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"
+           :xmlns:x15   "http://schemas.microsoft.com/office/spreadsheetml/2010/11/main"
+           :xmlns:x14ac "http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac"
+           :xmlns:xm    "http://schemas.microsoft.com/office/excel/2006/main"})
+
+(def wb-relationships
+  (str xmlh
+       (hc/html [:Relationships {:xmlns "http://schemas.openxmlformats.org/package/2006/relationships"}
+                 [:Relationship {:Id "rId1"
+                                 :Type "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
+                                 :Target "xl/workbook.xml"}]])))
+
+(defn ws-relationships [n]
+  (str xmlh
+       (hc/html
+        (into [:Relationships {:xmlns "http://schemas.openxmlformats.org/package/2006/relationships"}]
+              (for [x (range n)]
+                [:Relationship {:Id (str "rId" (inc x))
+                                :Type "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
+                                :Target (str "worksheets/sheet" (inc x) ".xml")}])))))
+
+(defn content-types [n]
+  (str xmlh
+       (hc/html
+        (into [:Types {:xmlns "http://schemas.openxmlformats.org/package/2006/content-types"}
+               [:Default {:Extension :rels
+                          :ContentType "application/vnd.openxmlformats-package.relationships+xml"}]
+               [:Default {:Extension :xml
+                          :ContentType :application/xml}]
+               [:Override {:PartName "/xl/workbook.xml"
+                           :ContentType "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"}]]
+              (for [x (range n)]
+                [:Override {:PartName (str "/xl/worksheets/sheet" (inc x) ".xml")
+                            :ContentType "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"}])))))
+
+(defn excel-date-serial [datetime]
+  (.between ChronoUnit/DAYS (LocalDate/of 1899 Month/DECEMBER 30) datetime))
+
+(defn excel-time-serial [datetime]
+  (/ (.between ChronoUnit/SECONDS (LocalDateTime/of 1899 Month/DECEMBER 30 0 0) datetime) 86400.0))
+
+(defn cell-type [value]
+  (cond
+    (instance? java.time.LocalDate value) ["n" (excel-date-serial value)]
+    (instance? java.time.LocalDateTime value) ["n" (excel-time-serial value)]
+    (string? value) ["inlineStr" [:is [:t value]]]
+    (number? value) ["n" value]
+    (boolean? value) ["b" (if value "1" "0")]
+    :else ["inlineStr" [:is [:t (str value)]]]))
+
+(defn generate-xml-cell
+  [col-letter row-num value]
+  (let [[cell-type cell-value] (cell-type value)]
+    [:c {:r (str (if (keyword? col-letter) (name col-letter) col-letter)
+                   (inc row-num)) :t cell-type} cell-value]))
+
+
+(defn generate-xml-row
+  ([row-data row-num]
+   [:row {:r (inc row-num)}
+    (map-indexed (fn [col-num val]
+                   (generate-xml-cell (char (+ col-num 65)) row-num val))
+                 row-data)])
+  ([row-data row-num column-mapping]
+   [:row {:r (inc row-num)}
+    (if (nil? column-mapping)
+      (map-indexed (fn [col-num val]
+                     (generate-xml-cell (char (+ col-num 65)) row-num val))
+                   (vals row-data))
+      (for [[key val] row-data
+            :let [col-letter (column-mapping key)]
+            :when col-letter]
+        (generate-xml-cell col-letter row-num val)))]))
+
+(defn create-sheet-xml 
+  [data]
+  (let [headers (if (map? data)
+                  (keys (first (:sheet data)))
+                  (first data))
+        rows (if (map? data)
+               (map-indexed #(generate-xml-row %2 (inc %) (:cmap data) ) (:sheet data))
+               (map (comp (partial generate-xml-row) vals) (:sheet data)))]
+    (str (hc/html [:worksheet xlns
+                   [:sheetData (cons (generate-xml-row headers 0) rows)]]))))
+
+(defn create-zip-entry 
+  [zip-stream entry-name content]
+  (let [entry  (ZipEntry. ^String entry-name)]
+    (.putNextEntry ^ZipOutputStream zip-stream ^ZipEntry entry)
+    (.write ^ZipOutputStream zip-stream (.getBytes ^String content "UTF-8"))
+    (.closeEntry ^ZipOutputStream zip-stream)))
+
+(defn create-xlsx 
+  [file-path data]
+  (let [workbook-xml  (str xmlh (hc/html [:workbook xlns
+                                          (into [:sheets]
+                                                (map-indexed #(vector :sheet {:name (:name %2) :sheetId (inc %)
+                                                                              :r:id (str "rId" (inc %))}) data))]))]
+    (with-open [fos (FileOutputStream. ^String file-path)
+                zos (ZipOutputStream. fos)]
+      (dorun (map-indexed
+              #(create-zip-entry zos (str "xl/worksheets/sheet" (inc %) ".xml")  (create-sheet-xml %2)) data))
+      (create-zip-entry zos "[Content_Types].xml" (content-types (count data)))
+      (create-zip-entry zos "_rels/.rels" wb-relationships)
+      (create-zip-entry zos "xl/_rels/workbook.xml.rels" (ws-relationships (count data)))
+      (create-zip-entry zos "xl/workbook.xml" workbook-xml))))
+
