@@ -1,3 +1,6 @@
 {:paths ["src"]
+ :deps {org.clojure/data.xml {:mvn/version "0.2.0-alpha6"}
+        metosin/malli {:mvn/version "0.9.0"}
+        org.clojure/tools.cli {:mvn/version "1.0.206"}}
  :bbin/bin {bb-excel {:main-opts ["-f" "bb-excel"]}
             bbexcel {:main-opts ["-f" "bbexcel"]}}}

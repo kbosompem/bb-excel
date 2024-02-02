@@ -2,7 +2,7 @@
 
 (require '[babashka.deps :as deps])
 
-(deps/add-deps '{:deps {com.github.kbosompem/bb-excel {:mvn/version "0.0.9"}}})
+(deps/add-deps '{:deps {com.github.kbosompem/bb-excel {:mvn/version "0.1.1"}}})
 
 (ns bbexcel
   (:require [bb-excel.core     :refer [get-sheets get-range get-sheet]]
@@ -115,7 +115,7 @@
 (defn help
   "Command line options"
   [summary]
-  (->> ["bbexcel 0.0.9"
+  (->> ["bbexcel 0.1.1 Read Excel Files with Babashka"
         ""
         "Usage: bbexcel input-file options"
         ""

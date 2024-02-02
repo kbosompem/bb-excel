@@ -16,24 +16,34 @@
 
 (set! *warn-on-reflection* true)
 
-(defonce ^SimpleDateFormat sdf (SimpleDateFormat. "HH:mm:ss"))
-(.setTimeZone sdf (TimeZone/getTimeZone "UTC"))
+(def  ^SimpleDateFormat SDF (doto (SimpleDateFormat. "HH:mm:ss")
+                                  (.setTimeZone (TimeZone/getTimeZone "UTC"))))
+(def ^:const BASE_ROW_INDEX 0)
+(def ^:const BASE_COLUMN_INDEX 0)
+(def ^:const A_CHAR_INDEX (int \A))
 
-(defn parse-xlong [x]
-  (parse-long (or x "")))
+(def ^:const dates #{"14"  "15"  "16"  "17"  "30"  "34"  "51"
+                     "52"  "53"  "55"  "56"  "58"  "165"
+                     "166" "167" "168" "169" "170" "171" "172"
+                     "173" "174" "175" "176" "177" "178" "179"
+                     "180" "181" "184" "185" "186" "187"})
 
-(def error-codes
+(def ^:const times #{"164"  "18" "19" "21" "20"  "45" "46" "47"})
+
+(def ^:const pcts  #{"9" "10"})
+
+(def ^:const error-codes 
   {"#NAME?"   :bad-name
    "#DIV/0!"  :div-by-0
    "#REF!"    :invalid-reference
    "#NUM!"    :infinity
    "#N/A"     :not-applicable
-   "#VALUE!"  :invalid-value
+   "#VALUE!"  :invalid-value 
    "#NULL!"   :null
    "#SPILL!"  :multiple-results
    nil        :unknown-error})
 
-(def defaults
+(def ^:const defaults
   "Default values for processing the Excel Spreadsheet
    :row  integer  :-  Which row to begin data extraction defaults to 0 
    :fxn  function :-  Which function to use parse header rows
@@ -43,6 +53,31 @@
    :fxn str
    :rows 10000
    :hdr false})
+
+(def xmlh "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n")
+
+(def xlns {:xmlns       "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+           :xmlns:r     "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+           :xmlns:mx    "http://schemas.microsoft.com/office/mac/excel/2008/main"
+           :xmlns:mc    "http://schemas.openxmlformats.org/markup-compatibility/2006"
+           :xmlns:mv    "urn:schemas-microsoft-com:mac:vml"
+           :xmlns:x14   "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"
+           :xmlns:x15   "http://schemas.microsoft.com/office/spreadsheetml/2010/11/main"
+           :xmlns:x14ac "http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac"
+           :xmlns:xm    "http://schemas.microsoft.com/office/excel/2006/main"})
+
+(def wb-relationships
+  (str xmlh
+       (hc/html [:Relationships {:xmlns "http://schemas.openxmlformats.org/package/2006/relationships"}
+                 [:Relationship {:Id "rId1"
+                                 :Type "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
+                                 :Target "xl/workbook.xml"}]])))
+
+(defn parse-xlong
+  "Adds support for passing in nil into parse-long
+   Return an empty string if x is nil"
+  [x]
+  (parse-long (or x "")))
 
 (defn- get-zipfile
   "Retrieve ZipFile object if provided `file-or-filename` point to existing file."
@@ -86,22 +121,12 @@
 (defn num2time
   "Format Excel Time"
   [n]
-  (when n (.format sdf (*  (parse-double (str n)) 24 60 60 1000))))
+  (when n (.format SDF (*  (parse-double (str n)) 24 60 60 1000))))
 
 (defn num2pct
   "Format Percentage"
   [n]
   (when n (format "%.4f%%" (* 100 (parse-double (str n))))))
-
-(def dates #{"14"  "15"  "16"  "17"  "30"  "34"  "51"
-             "52"  "53"  "55"  "56"  "58"  "165"
-             "166" "167" "168" "169" "170" "171" "172"
-             "173" "174" "175" "176" "177" "178" "179"
-             "180" "181" "184" "185" "186" "187"})
-
-(def times #{"164"  "18" "19" "21" "20"  "45" "46" "47"})
-
-(def pcts  #{"9" "10"})
 
 (defn style-check
   "Check if the style id is within a range."
@@ -110,7 +135,6 @@
     (try
       (ids (styles (parse-xlong (:s cell-attrs))))
       (catch Exception _ false))))
-
 
 (defn extract-cell-value
   "Possible cell-value types well explained here https://stackoverflow.com/a/18346273"
@@ -159,8 +183,6 @@
         (mapv #(-> % :attrs :numFmtId) xf-nodes)))
     []))
 
-(def ^:const BASE_ROW_INDEX 0)
-(def ^:const BASE_COLUMN_INDEX 0)
 
 (defn valid-cell-index?
   [cell-index]
@@ -168,7 +190,7 @@
     (boolean (re-find #"^[A-Z]{1,3}\d+$" cell-index))
     false))
 
-(def ^:const A_CHAR_INDEX (int \A))
+
 
 (defn number->column-letter
   [n]
@@ -362,27 +384,7 @@
         [cs ce] cols]
     (get-cells sheet (range rs re) (crange cs ce))))
 
-; -------------------------------------
-; EXPERIMENTAL 
-; --------------------------------------
-(def xmlh "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n")
 
-(def xlns {:xmlns       "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-           :xmlns:r     "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-           :xmlns:mx    "http://schemas.microsoft.com/office/mac/excel/2008/main"
-           :xmlns:mc    "http://schemas.openxmlformats.org/markup-compatibility/2006"
-           :xmlns:mv    "urn:schemas-microsoft-com:mac:vml"
-           :xmlns:x14   "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"
-           :xmlns:x15   "http://schemas.microsoft.com/office/spreadsheetml/2010/11/main"
-           :xmlns:x14ac "http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac"
-           :xmlns:xm    "http://schemas.microsoft.com/office/excel/2006/main"})
-
-(def wb-relationships
-  (str xmlh
-       (hc/html [:Relationships {:xmlns "http://schemas.openxmlformats.org/package/2006/relationships"}
-                 [:Relationship {:Id "rId1"
-                                 :Type "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
-                                 :Target "xl/workbook.xml"}]])))
 
 (defn ws-relationships [n]
   (str xmlh
@@ -393,7 +395,9 @@
                                 :Type "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
                                 :Target (str "worksheets/sheet" (inc x) ".xml")}])))))
 
-(defn content-types [n]
+(defn- content-types 
+  "Generate Content Types"
+  [n]
   (str xmlh
        (hc/html
         (into [:Types {:xmlns "http://schemas.openxmlformats.org/package/2006/content-types"}
@@ -407,29 +411,37 @@
                 [:Override {:PartName (str "/xl/worksheets/sheet" (inc x) ".xml")
                             :ContentType "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"}])))))
 
-(defn excel-date-serial [datetime]
+(defn excel-date-serial 
+  "Convert a java LocalDate to an MS Excel integer value"
+  [datetime]
   (.between ChronoUnit/DAYS (LocalDate/of 1899 Month/DECEMBER 30) datetime))
 
-(defn excel-time-serial [datetime]
+(defn excel-time-serial 
+  "Convert a java LocalDateTime to an MS Excel decimal value."
+  [datetime]
   (/ (.between ChronoUnit/SECONDS (LocalDateTime/of 1899 Month/DECEMBER 30 0 0) datetime) 86400.0))
 
-(defn cell-type [value]
+(defn- cell-type 
+  "Determine cell data type"
+  [value]
   (cond
-    (instance? java.time.LocalDate value) ["n" (excel-date-serial value)]
-    (instance? java.time.LocalDateTime value) ["n" (excel-time-serial value)]
+    (instance? java.time.LocalDate value) ["n" [:v (excel-date-serial value)]]
+    (instance? java.time.LocalDateTime value) ["n" [:v (excel-time-serial value)]]
     (string? value) ["inlineStr" [:is [:t value]]]
-    (number? value) ["n" value]
-    (boolean? value) ["b" (if value "1" "0")]
+    (number? value) ["n" [:v value]]
+    (boolean? value) ["b" [:v (if value "1" "0")]]
     :else ["inlineStr" [:is [:t (str value)]]]))
 
-(defn generate-xml-cell
-  [col-letter row-num value]
-  (let [[cell-type cell-value] (cell-type value)]
-    [:c {:r (str (if (keyword? col-letter) (name col-letter) col-letter)
-                   (inc row-num)) :t cell-type} cell-value]))
+(defn- generate-xml-cell
+  "Generate cell value in hiccup format"
+  [c r value]
+  (let [[t v] (cell-type value)]
+    [:c {:r (str (if (keyword? c) (name c) c)
+                 (inc r))
+         :t t} v]))
 
-
-(defn generate-xml-row
+(defn- generate-xml-row 
+  "Generate row information in hiccup format"
   ([row-data row-num]
    [:row {:r (inc row-num)}
     (map-indexed (fn [col-num val]
@@ -446,18 +458,21 @@
             :when col-letter]
         (generate-xml-cell col-letter row-num val)))]))
 
-(defn create-sheet-xml 
+(defn- create-sheet-xml 
+  "Create the sheet data in hiccup format. 
+   Checks to see if the data provided is a vector of hashmaps vs a vector of vectors"
   [data]
-  (let [headers (if (map? data)
+  (let [headers (if (map? (first (:sheet data)))
                   (keys (first (:sheet data)))
-                  (first data))
-        rows (if (map? data)
-               (map-indexed #(generate-xml-row %2 (inc %) (:cmap data) ) (:sheet data))
-               (map (comp (partial generate-xml-row) vals) (:sheet data)))]
+                  (first (:sheet data)))
+        rows (if (map? (first (:sheet data)))
+               (map-indexed #(generate-xml-row %2 (inc %) (:cmap data)) (:sheet data))
+               (map-indexed #(generate-xml-row %2 (inc %)) (rest (:sheet data))))]
     (str (hc/html [:worksheet xlns
                    [:sheetData (cons (generate-xml-row headers 0) rows)]]))))
 
-(defn create-zip-entry 
+(defn create-zip-entry
+  "For a given filepath and content add to a java ZipOuputStream"
   [zip-stream entry-name content]
   (let [entry  (ZipEntry. ^String entry-name)]
     (.putNextEntry ^ZipOutputStream zip-stream ^ZipEntry entry)
@@ -465,8 +480,13 @@
     (.closeEntry ^ZipOutputStream zip-stream)))
 
 (defn create-xlsx 
+  "Create an Excel spreadsheet
+     file-path : Destination folder and filename. e.g /test/sample.xlsx will create the folder test 
+                  if it does not exist and place the newly created sample.xlsx in that folder
+     data : Data should be vector of maps or vector of vectors where each map or vector represents a row"
   [file-path data]
-  (let [workbook-xml  (str xmlh (hc/html [:workbook xlns
+  (let [_ (io/make-parents file-path)
+        workbook-xml  (str xmlh (hc/html [:workbook xlns
                                           (into [:sheets]
                                                 (map-indexed #(vector :sheet {:name (:name %2) :sheetId (inc %)
                                                                               :r:id (str "rId" (inc %))}) data))]))]
@@ -478,4 +498,3 @@
       (create-zip-entry zos "_rels/.rels" wb-relationships)
       (create-zip-entry zos "xl/_rels/workbook.xml.rels" (ws-relationships (count data)))
       (create-zip-entry zos "xl/workbook.xml" workbook-xml))))
-

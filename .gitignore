@@ -20,3 +20,5 @@ settings2.xml
 .DS_Store
 .idea
 *.iml
+output/
+notes.txt

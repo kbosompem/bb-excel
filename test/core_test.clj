@@ -3,7 +3,9 @@
             [clojure.set :refer [intersection]]
             [clojure.test :refer [deftest is run-tests testing]]
             [bb-excel.core :refer [get-sheets get-sheet-names get-sheet
-                                   get-range create-xlsx]])
+                                   get-range create-xlsx]]
+            [malli.core :as malli]
+            [malli.generator :as mg])
   (:import (clojure.lang ExceptionInfo)
            [java.util.zip ZipFile]))
 
@@ -49,7 +51,7 @@
     (is (thrown-with-msg? ExceptionInfo #"Could not open 'null'! Argument should be string or file."
                           (get-sheets nil)))))
 
-(deftest get-range-test 
+(deftest get-range-test
   (testing "Get Sheet Range"
     (is (= '({:_r 1, :A "FirstName", :B "LastName"}
              {:_r 2, :A "Jack", :B "Bean"})
@@ -68,30 +70,77 @@
 
 (deftest create-xlsx-test
   (testing "Creating an Excel Spreadsheet"
-    (is (= 3 (let [d [{:name "TestSheet"
-                       :sheet [{:A "1" :B "One" :C "Baako"}
-                               {:A "2" :B "Two" :C "Mienu"}
-                               {:A "3" :B "Three" :C "Miensa"}]}]
-                   s (create-xlsx "zomb.xlsx" d)
-                   xs (get-sheets "zomb.xlsx")
-                   data  (-> xs
-                             first
-                             (dissoc :idx)
-                             :sheet
-                             (->> (map #(dissoc % :_r))))
-                   ins (clojure.set/intersection (set (:sheet (first d))) (set data))]
-              (count ins))))))
+    (is (= #{{:A "2", :B "Two", :C "Mienu"} {:A "1", :B "One", :C "Baako"} {:A "3", :B "Three", :C "Miensa"}} 
+           (let [d [{:name "TestSheet"
+                     :sheet [{:A "1" :B "One" :C "Baako"}
+                             {:A "2" :B "Two" :C "Mienu"}
+                             {:A "3" :B "Three" :C "Miensa"}]}]
+                 _ (create-xlsx "zomb.xlsx" d)
+                 xs (get-sheets "zomb.xlsx")
+                 data  (-> xs
+                           first
+                           (dissoc :idx)
+                           :sheet
+                           (->> (map #(dissoc % :_r))))
+                 ins (clojure.set/intersection (set (:sheet (first d))) (set data))]
+             ins)))))
+
+
 
 (comment
   (run-tests)
-  
+
   (create-xlsx "sample.xlsx"    [{:name "TestSheet"
                                   :sheet [{:A "1" :B "One" :C "Baako"}
                                           {:A "2" :B "Two" :C "Mienu"}
                                           {:A "3" :B "Three" :C "Miensa"}]}])
-  To validate the data was saved
+   ;  To validate the data was saved
   (clojure.pprint/print-table
    (get-sheet "sample.xlsx" "TestSheet" {:hdr true}))
 
+  (get-sheet "test/data/simple.xlsx" "Shows" {:hdr true :row 1})
+
+  (create-xlsx "output/kay.xlsx" [{:name "TVShows"
+                                   :sheet [{"Rank" "1", "TV Show" "Sesame Street"}
+                                           {"Rank" "2", "TV Show" "La Femme Nikita"}
+                                           {"Rank" "3", "TV Show" "House M.D"}
+                                           {"Rank" "4", "TV Show" "Breaking Bad"}]}
+                                  {:name "Shows-1"
+                                   :sheet [{"Rank" "1", "TV Show" "1Sesame Street"}
+                                           {"Rank" "2", "TV Show" "1La Femme Nikita"}
+                                           {"Rank" "3", "TV Show" "1House M.D"}
+                                           {"Rank" "4", "TV Show" "1Breaking Bad"}]}
+                                  {:name "Shows-2"
+                                   :sheet [{"Rank" "1", "TV Show" "2Sesame Street"}
+                                           {"Rank" "2", "TV Show" "2La Femme Nikita"}
+                                           {"Rank" "3", "TV Show" "2House M.D"}
+                                           {"Rank" "4", "TV Show" (java.time.LocalDate/now)}]}])
+
+  (create-xlsx "output/ghana.xlsx" [{:name "mama"
+                                     :sheet [["Col A" "Col B" "Col C" "Col D" "Col E"]
+                                             [\1 2 3 4 5]
+                                             [1 \2 3 4 (java.time.LocalDate/now)]
+                                             [\a \b \c \d \e]]}])
+
+  (create-xlsx "output/ghana.xlsx" [[1 2 3 4 5]
+                                    [1 2 3 4 5]
+                                    [\a \b \c \d \e]])
+
+  (get-sheet "output/kay.xlsx" "TVShows" {:hdr true :row 1})
+  
+  (get-sheet "output/sample.xlsx" "TestSheet" {:hdr true :row 1 :fxn (comp keyword str)})
+
+  
+  
+  (def MSheet [:vector {:min 1 :max 4} map?])
+  (def VSheet [:vector {:min 1 :max 4} vector?])
+  (def Workbook [:vector [:map
+                          [:name :string]
+                          [:cmap {:optional true} map?]
+                          [:idx  {:optional true} :int]
+                          [:sheet  [:or MSheet VSheet]]]])
+  
+  (create-xlsx "sosket.xlsx" (malli.generator/generate Workbook))
+ (create-xlsx "maga.xlsx" [{:name "2R6a325retiLS5IvCtV", :sheet [[]]}])
   #{}
   )
