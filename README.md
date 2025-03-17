@@ -1,6 +1,6 @@
 # bb-excel
 [![Clojars Project](https://img.shields.io/clojars/v/com.github.kbosompem/bb-excel.svg)](https://clojars.org/com.github.kbosompem/bb-excel)
-[![bb compatible](https://raw.githubusercontent.com/babashka/babashka/master/logo/badge.svg)](https://babashka.org)
+[![bb compatible](https://raw.githubusercontent.com/babashka/babashka/master/logo/badge.svg)](https://book.babashka.org#badges)
 
 Use [**Babashka**](https://www.babashka.org) to work with data in Excel Spreadsheets!
 
