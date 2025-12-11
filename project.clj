@@ -9,8 +9,13 @@
                  [metosin/malli  "0.9.0"]
                  [org.clojure/tools.cli "1.0.219"]]
   :plugins [[lein-ancient "1.0.0-RC3"]]
-  :deploy-repositories [["releases" :clojars]
-                        ["snapshots" :clojars]]
+  :deploy-repositories [["releases" {:url "https://repo.clojars.org"
+                                     :username :env/clojars_username
+                                     :password :env/clojars_password
+                                     :sign-releases false}]
+                        ["snapshots" {:url "https://repo.clojars.org"
+                                      :username :env/clojars_username
+                                      :password :env/clojars_password}]]
   :main bb-excel.core
   :uberjar-name "bb-excel.jar"
   :jar-name "bb-excel-slim.jar"
