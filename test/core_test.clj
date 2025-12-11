@@ -4,6 +4,7 @@
             [clojure.test :refer [deftest is run-tests testing]]
             [bb-excel.core :refer [get-sheets get-sheet-names get-sheet
                                    get-range create-xlsx]]
+            [bb-excel.styled :as styled]
             [malli.core :as malli]
             [malli.generator :as mg])
   (:import (clojure.lang ExceptionInfo)
@@ -162,6 +163,67 @@
                            (->> (map #(dissoc % :_r))))
                  ins (clojure.set/intersection (set (:sheet (first d))) (set data))]
              ins)))))
+
+;; Experimental: Tailwind-styled xlsx creation
+(deftest styled-xlsx-test
+  (testing "Parse Tailwind classes"
+    (is (= {:fill "3B82F6" :font-color "FFFFFF" :bold true}
+           (#'styled/parse-classes "bg-blue-500.text-white.font-bold")))
+    (is (= {:align :right}
+           (#'styled/parse-classes "text-right")))
+    (is (= {:border-left "thin" :border-right "thin"
+            :border-top "thin" :border-bottom "thin"}
+           (#'styled/parse-classes "border"))))
+
+  (testing "Parse cell selectors"
+    (let [parsed (#'styled/parse-selector :A1.bg-red-500)]
+      (is (= :cell (get-in parsed [:target :type])))
+      (is (= "A" (get-in parsed [:target :col])))
+      (is (= 1 (get-in parsed [:target :row])))
+      (is (= "EF4444" (get-in parsed [:styles :fill]))))
+
+    (let [parsed (#'styled/parse-selector :5.font-bold)]
+      (is (= :row (get-in parsed [:target :type])))
+      (is (= 5 (get-in parsed [:target :row]))))
+
+    (let [parsed (#'styled/parse-selector :AA.border)]
+      (is (= :column (get-in parsed [:target :type])))
+      (is (= "AA" (get-in parsed [:target :col]))))
+
+    (let [parsed (#'styled/parse-selector :Sheet1/B2.italic)]
+      (is (= "Sheet1" (:sheet parsed)))
+      (is (= "B" (get-in parsed [:target :col])))))
+
+  (testing "Create styled xlsx and read back data"
+    (styled/create-styled-xlsx "styled_test.xlsx"
+                               [[:A1.bg-blue-500.font-bold "Header"]
+                                [:A2 "Data"]
+                                [:B1.text-right 100]
+                                [:B2 200]])
+    (let [data (get-sheet "styled_test.xlsx" 1)]
+      (is (= 2 (count data)))
+      (is (= "Header" (:A (first data))))
+      (is (= 100 (:B (first data))))
+      (is (= "Data" (:A (second data))))
+      (is (= 200 (:B (second data))))))
+
+  (testing "Row styling applies to all cells"
+    (styled/create-styled-xlsx "styled_row_test.xlsx"
+                               [[:1.bg-gray-100 ["A" "B" "C"]]
+                                [:2 ["D" "E" "F"]]])
+    (let [data (get-sheet "styled_row_test.xlsx" 1)]
+      (is (= "A" (:A (first data))))
+      (is (= "C" (:C (first data))))
+      (is (= "D" (:A (second data))))))
+
+  (testing "Range styling"
+    (styled/create-styled-xlsx "styled_range_test.xlsx"
+                               [[:A1:B2.border [[1 2] [3 4]]]])
+    (let [data (get-sheet "styled_range_test.xlsx" 1)]
+      (is (= 1 (:A (first data))))
+      (is (= 2 (:B (first data))))
+      (is (= 3 (:A (second data))))
+      (is (= 4 (:B (second data)))))))
 
 (comment
   (run-tests)
