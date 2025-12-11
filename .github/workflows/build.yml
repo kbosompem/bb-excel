@@ -3,17 +3,61 @@ name: Build bb-excel
 on:
   push:
     branches: [ "main" ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ "main" ]
 
 jobs:
-  build:
-
+  test:
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v3
-    - name: Install dependencies
-      run: lein deps
-    - name: Run tests
-      run: lein test
+      - uses: actions/checkout@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      - name: Install Leiningen
+        uses: DeLaGuardo/setup-clojure@12.5
+        with:
+          lein: 2.11.2
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-lein-${{ hashFiles('**/project.clj') }}
+          restore-keys: |
+            ${{ runner.os }}-lein-
+      - name: Install dependencies
+        run: lein deps
+      - name: Run tests
+        run: lein test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      - name: Install Leiningen
+        uses: DeLaGuardo/setup-clojure@12.5
+        with:
+          lein: 2.11.2
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-lein-${{ hashFiles('**/project.clj') }}
+          restore-keys: |
+            ${{ runner.os }}-lein-
+      - name: Deploy to Clojars
+        env:
+          CLOJARS_USERNAME: ${{ secrets.CLOJARS_USERNAME }}
+          CLOJARS_PASSWORD: ${{ secrets.CLOJARS_PASSWORD }}
+        run: lein deploy clojars

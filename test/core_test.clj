@@ -68,9 +68,87 @@
     (is (= '({:_r 1, :A 1})
            (get-sheet "test/data/without_sharedfiles.xlsx" 1)))))
 
+;; Issue #17: get-sheet by name loads wrong data when Excel file has deleted sheets
+;; https://github.com/kbosompem/bb-excel/issues/17
+(deftest deleted-sheets-test
+  (testing "Sheet names with non-sequential IDs (simulating deleted sheets)"
+    ;; The file has sheetIds 1, 4, 5 but the relationship IDs map correctly
+    (is (= [{:name "Users" :idx 1}
+            {:name "Communities" :idx 4}
+            {:name "Zones" :idx 5}]
+           (get-sheet-names "test/data/deleted_sheets.xlsx"))))
+
+  (testing "Loading sheets by name correctly maps to actual worksheet files"
+    ;; Users should load from sheet1.xml (via rId1)
+    (let [users (get-sheet "test/data/deleted_sheets.xlsx" "Users")]
+      (is (= #{:A :B :C :_r} (set (keys (first users)))))
+      (is (= "user_id" (:A (first users)))))
+
+    ;; Communities should load from sheet2.xml (via rId2), not sheet4.xml
+    (let [communities (get-sheet "test/data/deleted_sheets.xlsx" "Communities")]
+      (is (= "community_id" (:A (first communities)))))
+
+    ;; Zones should load from sheet3.xml (via rId3), not sheet5.xml
+    (let [zones (get-sheet "test/data/deleted_sheets.xlsx" "Zones")]
+      (is (= "zone_id" (:A (first zones))))))
+
+  (testing "Loading sheets by positional index (1-based)"
+    ;; Position 1 = Users (first sheet in list)
+    (is (= "user_id" (:A (first (get-sheet "test/data/deleted_sheets.xlsx" 1)))))
+    ;; Position 2 = Communities (second sheet in list)
+    (is (= "community_id" (:A (first (get-sheet "test/data/deleted_sheets.xlsx" 2)))))
+    ;; Position 3 = Zones (third sheet in list)
+    (is (= "zone_id" (:A (first (get-sheet "test/data/deleted_sheets.xlsx" 3)))))))
+
+;; Issue #18: Header columns randomly missing when parsing xlsx with get-sheet
+;; https://github.com/kbosompem/bb-excel/issues/18
+(deftest missing-cell-refs-test
+  (testing "Cells without r attribute are assigned sequential column letters"
+    ;; File where all cells lack the r attribute
+    (let [data (get-sheet "test/data/no_cell_refs.xlsx" "NoRefs")]
+      ;; Row 1 should have columns A through E
+      (is (= #{:A :B :C :D :E :_r} (set (keys (first data)))))
+      (is (= "col_a" (:A (first data))))
+      (is (= "col_b" (:B (first data))))
+      (is (= "col_c" (:C (first data))))
+      (is (= "col_d" (:D (first data))))
+      (is (= "col_e" (:E (first data))))
+
+      ;; Row 2 should also have columns A through E
+      (is (= "val_a1" (:A (second data))))
+      (is (= "val_e1" (:E (second data))))))
+
+  (testing "Mixed cells with and without r attributes"
+    (let [data (get-sheet "test/data/mixed_refs.xlsx" "MixedRefs")]
+      ;; Row 1: A1, B1 have refs, then C, D, E continue sequentially
+      (is (= "header_a" (:A (first data))))
+      (is (= "header_b" (:B (first data))))
+      (is (= "header_c" (:C (first data))))
+      (is (= "header_d" (:D (first data))))
+      (is (= "header_e" (:E (first data))))
+
+      ;; Row 2: A2 has ref, gap (no B), C2 has ref, D, E continue from C
+      ;; Expected: A=a_val, B=nil, C=c_val, D=d_val, E=e_val
+      (is (= "a_val" (:A (second data))))
+      (is (nil? (:B (second data)))) ;; Gap - B is missing
+      (is (= "c_val" (:C (second data))))
+      (is (= "d_val" (:D (second data))))
+      (is (= "e_val" (:E (second data))))
+
+      ;; Row 3: All cells without refs, should be A through E
+      (is (= "row3_a" (:A (nth data 2))))
+      (is (= "row3_e" (:E (nth data 2))))))
+
+  (testing "Header mode works correctly with missing cell refs"
+    (let [data (get-sheet "test/data/no_cell_refs.xlsx" "NoRefs" {:hdr true :row 1})]
+      ;; Headers should be col_a, col_b, etc.
+      (is (= #{"col_a" "col_b" "col_c" "col_d" "col_e" :_r} (set (keys (first data)))))
+      (is (= "val_a1" (get (first data) "col_a")))
+      (is (= "val_e1" (get (first data) "col_e"))))))
+
 (deftest create-xlsx-test
   (testing "Creating an Excel Spreadsheet"
-    (is (= #{{:A "2", :B "Two", :C "Mienu"} {:A "1", :B "One", :C "Baako"} {:A "3", :B "Three", :C "Miensa"}} 
+    (is (= #{{:A "2", :B "Two", :C "Mienu"} {:A "1", :B "One", :C "Baako"} {:A "3", :B "Three", :C "Miensa"}}
            (let [d [{:name "TestSheet"
                      :sheet [{:A "1" :B "One" :C "Baako"}
                              {:A "2" :B "Two" :C "Mienu"}
@@ -84,8 +162,6 @@
                            (->> (map #(dissoc % :_r))))
                  ins (clojure.set/intersection (set (:sheet (first d))) (set data))]
              ins)))))
-
-
 
 (comment
   (run-tests)
@@ -127,11 +203,9 @@
                                     [\a \b \c \d \e]])
 
   (get-sheet "output/kay.xlsx" "TVShows" {:hdr true :row 1})
-  
+
   (get-sheet "output/sample.xlsx" "TestSheet" {:hdr true :row 1 :fxn (comp keyword str)})
 
-  
-  
   (def MSheet [:vector {:min 1 :max 4} map?])
   (def VSheet [:vector {:min 1 :max 4} vector?])
   (def Workbook [:vector [:map
@@ -139,8 +213,7 @@
                           [:cmap {:optional true} map?]
                           [:idx  {:optional true} :int]
                           [:sheet  [:or MSheet VSheet]]]])
-  
+
   (create-xlsx "sosket.xlsx" (malli.generator/generate Workbook))
- (create-xlsx "maga.xlsx" [{:name "2R6a325retiLS5IvCtV", :sheet [[]]}])
-  #{}
-  )
+  (create-xlsx "maga.xlsx" [{:name "2R6a325retiLS5IvCtV", :sheet [[]]}])
+  #{})

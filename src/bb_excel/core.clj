@@ -17,7 +17,7 @@
 (set! *warn-on-reflection* true)
 
 (def  ^SimpleDateFormat SDF (doto (SimpleDateFormat. "HH:mm:ss")
-                                  (.setTimeZone (TimeZone/getTimeZone "UTC"))))
+                              (.setTimeZone (TimeZone/getTimeZone "UTC"))))
 (def ^:const BASE_ROW_INDEX 0)
 (def ^:const BASE_COLUMN_INDEX 0)
 (def ^:const A_CHAR_INDEX (int \A))
@@ -32,13 +32,13 @@
 
 (def ^:const pcts  #{"9" "10"})
 
-(def ^:const error-codes 
+(def ^:const error-codes
   {"#NAME?"   :bad-name
    "#DIV/0!"  :div-by-0
    "#REF!"    :invalid-reference
    "#NUM!"    :infinity
    "#N/A"     :not-applicable
-   "#VALUE!"  :invalid-value 
+   "#VALUE!"  :invalid-value
    "#NULL!"   :null
    "#SPILL!"  :multiple-results
    nil        :unknown-error})
@@ -90,6 +90,21 @@
       (ZipFile. file)
       (throw-ex (format "Could not open '%s'! File does not exist." file-or-filename)))))
 
+(defn get-workbook-relationships
+  "Get the relationship mappings from xl/_rels/workbook.xml.rels.
+   Returns a map from rId to the Target path (e.g. {\"rId1\" \"worksheets/sheet1.xml\"})."
+  [^ZipFile zipfile]
+  (if-let [rels-entry (.getEntry zipfile "xl/_rels/workbook.xml.rels")]
+    (with-open [rels (.getInputStream zipfile rels-entry)]
+      (let [rels-node (xml/parse rels {:namespace-aware false})
+            rel-nodes (->> (:content rels-node)
+                           (filter (by-tag :Relationship)))]
+        (into {} (map (fn [rel]
+                        (let [attrs (:attrs rel)]
+                          [(:Id attrs) (:Target attrs)])))
+              rel-nodes)))
+    {}))
+
 (defn get-sheet-names*
   [^ZipFile zipfile]
   (if-let [workbook-entry (.getEntry zipfile "xl/workbook.xml")]
@@ -100,17 +115,18 @@
             sheet-nodes (->> (:content sheets-node)
                              (filter (by-tag :sheet)))]
         (into [] (comp (map :attrs)
-                       (map #(select-keys % [:sheetId :name]))
+                       (map #(select-keys % [:sheetId :name :id]))
                        (map #(update % :sheetId parse-xlong))
-                       (map #(rename-keys % {:sheetId :idx})))
+                       (map #(rename-keys % {:sheetId :idx :id :rid})))
               sheet-nodes)))
     []))
 
 (defn get-sheet-names
-  "Retrieves a list of Sheet Names from a given Excel Spreadsheet"
+  "Retrieves a list of Sheet Names from a given Excel Spreadsheet.
+   Returns a vector of maps with :name and :idx keys."
   [file-or-filename]
   (let [^ZipFile zipfile (get-zipfile file-or-filename)]
-    (get-sheet-names* zipfile)))
+    (mapv #(dissoc % :rid) (get-sheet-names* zipfile))))
 
 (defn num2date
   "Format Excel Date"
@@ -183,14 +199,11 @@
         (mapv #(-> % :attrs :numFmtId) xf-nodes)))
     []))
 
-
 (defn valid-cell-index?
   [cell-index]
   (if cell-index
     (boolean (re-find #"^[A-Z]{1,3}\d+$" cell-index))
     false))
-
-
 
 (defn number->column-letter
   [n]
@@ -202,31 +215,41 @@
         (recur new-num (str (char (+ residue A_CHAR_INDEX)) acc)))
       acc)))
 
+(defn column-letter->number
+  "Convert column letter(s) to a 1-based numeric index.
+   A=1, B=2, ..., Z=26, AA=27, etc."
+  [col-str]
+  (reduce (fn [acc c]
+            (+ (* acc 26) (- (int c) (dec A_CHAR_INDEX))))
+          0
+          col-str))
+
 (defn get-col-index
-  "Self-calculated index is used only if cell-index attribute(:r) is missing on the cell"
-  [cell last-processed-col-index]
+  "Returns a vector of [col-letter col-number] where col-number is the 1-based numeric index.
+   Self-calculated index is used only if cell-index attribute(:r) is missing on the cell"
+  [cell last-processed-col-number]
   (let [cell-index (-> cell :attrs :r)]
     (if (valid-cell-index? cell-index)
-      (re-find #"[A-Z]{1,3}" cell-index) 
-          (-> last-processed-col-index
-          (inc)
-          (number->column-letter)))))
+      (let [col-letter (re-find #"[A-Z]{1,3}" cell-index)]
+        [col-letter (column-letter->number col-letter)])
+      (let [new-col-number (inc last-processed-col-number)]
+        [(number->column-letter new-col-number) new-col-number]))))
 
 (defn process-row
   "Process Excel row of data"
   [shared-strings styles row]
   (->> (:content row)
-       (reduce (fn [{:keys [row-data last-processed-col-index]} cell]
-                 (let [col-index (get-col-index cell last-processed-col-index)
+       (reduce (fn [{:keys [row-data last-processed-col-number]} cell]
+                 (let [[col-letter col-number] (get-col-index cell last-processed-col-number)
                        cell-value (extract-cell-value shared-strings styles cell)]
-                   {:row-data (assoc row-data (keyword col-index) cell-value)
-                    :last-processed-col-index col-index}))
+                   {:row-data (assoc row-data (keyword col-letter) cell-value)
+                    :last-processed-col-number col-number}))
                {:row-data {}
-                :last-processed-col-index BASE_COLUMN_INDEX})
+                :last-processed-col-number BASE_COLUMN_INDEX})
        (:row-data)))
 
 (defn process-rows
-  [shared-strings styles last-processed-row-index rows] 
+  [shared-strings styles last-processed-row-index rows]
   (lazy-seq
    (when rows
      (let [row (first rows)
@@ -240,27 +263,35 @@
                            row-index
                            (next rows)))))))
 
-(defn get-and-check-sheet-id
-  [^ZipFile zipfile sheetname-or-idx]
-  (let [sheets (get-sheet-names* zipfile)
-        found-sheet
-        (find-first (fn [sheet]
-                      (cond
-                        (string? sheetname-or-idx)
-                        (= (str/lower-case sheetname-or-idx)
-                           (str/lower-case (:name sheet)))
+(defn find-sheet-by-name-or-index
+  "Find a sheet by name (case-insensitive) or by positional index (1-based).
+   When using an integer index, it refers to the position in the sheets list,
+   not the internal sheetId."
+  [sheets sheetname-or-idx]
+  (cond
+    (string? sheetname-or-idx)
+    (find-first (fn [sheet]
+                  (= (str/lower-case sheetname-or-idx)
+                     (str/lower-case (:name sheet))))
+                sheets)
 
-                        (and (integer? sheetname-or-idx)
-                             (pos? sheetname-or-idx))
-                        (= sheetname-or-idx (:idx sheet))))
-                    sheets)]
-    (or (:idx found-sheet)
-        (throw-ex (format "Could not find sheet with name or index equal '%s'! Sheet does not exist." sheetname-or-idx)))))
+    (and (integer? sheetname-or-idx) (pos? sheetname-or-idx))
+    ;; Use 1-based positional index, not sheetId
+    (nth sheets (dec sheetname-or-idx) nil)
+
+    :else nil))
 
 (defn get-sheet-entry
-  [^ZipFile zipfile ^long sheet-id]
-  (or (.getEntry zipfile (str "xl/worksheets/sheet" sheet-id ".xml"))
-      (throw-ex (format "Could not find sheet with sheet-id equal '%s'! Sheet data file does not exist." sheet-id))))
+  "Get the ZipEntry for a worksheet using the relationship ID.
+   The rels map provides the mapping from rId to the actual worksheet path."
+  [^ZipFile zipfile rels rid]
+  (if-let [target (get rels rid)]
+    (let [path (if (str/starts-with? target "/")
+                 (subs target 1)
+                 (str "xl/" target))]
+      (or (.getEntry zipfile path)
+          (throw-ex (format "Could not find worksheet file '%s' for relationship '%s'!" path rid))))
+    (throw-ex (format "Could not find relationship with id '%s'!" rid))))
 
 (defn get-sheet
   "Get sheet from file or filename"
@@ -270,8 +301,12 @@
    (get-sheet file-or-filename sheetname-or-idx {}))
   ([file-or-filename sheetname-or-idx options]
    (let [^ZipFile zipfile (get-zipfile file-or-filename)
-         ^long sheet-id (get-and-check-sheet-id zipfile sheetname-or-idx)
-         ^ZipEntry sheet-entry (get-sheet-entry zipfile sheet-id)
+         sheets (get-sheet-names* zipfile)
+         found-sheet (find-sheet-by-name-or-index sheets sheetname-or-idx)
+         _ (when-not found-sheet
+             (throw-ex (format "Could not find sheet with name or index equal '%s'! Sheet does not exist." sheetname-or-idx)))
+         rels (get-workbook-relationships zipfile)
+         ^ZipEntry sheet-entry (get-sheet-entry zipfile rels (:rid found-sheet))
          opts    (merge defaults options)
          row     (:row opts)
          hdr     (:hdr opts)
@@ -298,7 +333,6 @@
                   (take rows (mapv #(rename-keys % h) dx))
                   (mapv #(rename-keys % h) dx))]
          (if (empty? cols) dy (mapv #(select-keys % cols) dy)))))))
-
 
 (defn get-sheets
   "Get all or specified sheet from the excel spreadsheet"
@@ -384,8 +418,6 @@
         [cs ce] cols]
     (get-cells sheet (range rs re) (crange cs ce))))
 
-
-
 (defn ws-relationships [n]
   (str xmlh
        (hc/html
@@ -395,7 +427,7 @@
                                 :Type "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
                                 :Target (str "worksheets/sheet" (inc x) ".xml")}])))))
 
-(defn- content-types 
+(defn- content-types
   "Generate Content Types"
   [n]
   (str xmlh
@@ -411,17 +443,17 @@
                 [:Override {:PartName (str "/xl/worksheets/sheet" (inc x) ".xml")
                             :ContentType "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"}])))))
 
-(defn excel-date-serial 
+(defn excel-date-serial
   "Convert a java LocalDate to an MS Excel integer value"
   [datetime]
   (.between ChronoUnit/DAYS (LocalDate/of 1899 Month/DECEMBER 30) datetime))
 
-(defn excel-time-serial 
+(defn excel-time-serial
   "Convert a java LocalDateTime to an MS Excel decimal value."
   [datetime]
   (/ (.between ChronoUnit/SECONDS (LocalDateTime/of 1899 Month/DECEMBER 30 0 0) datetime) 86400.0))
 
-(defn- cell-type 
+(defn- cell-type
   "Determine cell data type"
   [value]
   (cond
@@ -440,7 +472,7 @@
                  (inc r))
          :t t} v]))
 
-(defn- generate-xml-row 
+(defn- generate-xml-row
   "Generate row information in hiccup format"
   ([row-data row-num]
    [:row {:r (inc row-num)}
@@ -458,7 +490,7 @@
             :when col-letter]
         (generate-xml-cell col-letter row-num val)))]))
 
-(defn- create-sheet-xml 
+(defn- create-sheet-xml
   "Create the sheet data in hiccup format. 
    Checks to see if the data provided is a vector of hashmaps vs a vector of vectors"
   [data]
@@ -479,7 +511,7 @@
     (.write ^ZipOutputStream zip-stream (.getBytes ^String content "UTF-8"))
     (.closeEntry ^ZipOutputStream zip-stream)))
 
-(defn create-xlsx 
+(defn create-xlsx
   "Create an Excel spreadsheet
      file-path : Destination folder and filename. e.g /test/sample.xlsx will create the folder test 
                   if it does not exist and place the newly created sample.xlsx in that folder

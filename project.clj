@@ -1,4 +1,4 @@
-(defproject com.github.kbosompem/bb-excel "0.1.1"
+(defproject com.github.kbosompem/bb-excel "0.2.0"
   :description "A Simple Babashka Library for working with Microsoft Excel Files"
   :url "https://github.com/kbosompem/bb-excel"
   :license {:name "EPL-2.0"
