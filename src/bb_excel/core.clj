@@ -418,6 +418,99 @@
         [cs ce] cols]
     (get-cells sheet (range rs re) (crange cs ce))))
 
+(defn- normalize-xl-path
+  "Normalize a relationship Target to a path within the zip (no leading slash, starts from root)."
+  [target]
+  (when target
+    (let [t (if (str/starts-with? target "/") (subs target 1) target)]
+      (if (str/starts-with? t "xl/") t (str "xl/" t)))))
+
+(defn- get-sheet-table-paths
+  "Return zip-relative paths to table XML files referenced by a worksheet.
+   sheet-rel-path is the path relative to xl/ (e.g. 'worksheets/sheet1.xml')."
+  [^ZipFile zipfile sheet-rel-path]
+  (let [sheet-name (last (str/split sheet-rel-path #"/"))
+        rels-path (str "xl/worksheets/_rels/" sheet-name ".rels")
+        table-type "http://schemas.openxmlformats.org/officeDocument/2006/relationships/table"]
+    (if-let [rels-entry (.getEntry zipfile rels-path)]
+      (with-open [rels (.getInputStream zipfile rels-entry)]
+        (let [rels-node (xml/parse rels {:namespace-aware false})]
+          (->> (:content rels-node)
+               (filter (by-tag :Relationship))
+               (filter #(= table-type (-> % :attrs :Type)))
+               (mapv (fn [rel]
+                       (let [target (-> rel :attrs :Target)]
+                         (cond
+                           (str/starts-with? target "/") (subs target 1)
+                           (str/starts-with? target "../") (str "xl/" (subs target 3))
+                           :else (str "xl/worksheets/" target))))))))
+      [])))
+
+(defn- parse-table-xml
+  "Parse a table XML file and return table metadata."
+  [^ZipFile zipfile table-path]
+  (when-let [table-entry (.getEntry zipfile table-path)]
+    (with-open [tstream (.getInputStream zipfile table-entry)]
+      (let [table-node (xml/parse tstream {:namespace-aware false})
+            attrs (:attrs table-node)
+            cols-node (->> (:content table-node)
+                           (find-first (by-tag :tableColumns)))
+            columns (->> (:content cols-node)
+                         (filter (by-tag :tableColumn))
+                         (mapv #(-> % :attrs :name)))]
+        {:name (:name attrs)
+         :display-name (:displayName attrs)
+         :ref (:ref attrs)
+         :columns columns}))))
+
+(defn get-table-names
+  "Get metadata for all named tables in an Excel file.
+   Returns a vector of maps with :name, :display-name, :sheet, :columns, and :ref keys."
+  [file-or-filename]
+  (let [^ZipFile zipfile (get-zipfile file-or-filename)
+        sheets (get-sheet-names* zipfile)
+        rels (get-workbook-relationships zipfile)]
+    (into []
+          (for [sheet sheets
+                :let [target (get rels (:rid sheet))
+                      sheet-zip-path (normalize-xl-path target)
+                      ;; Path relative to xl/ for finding the _rels file
+                      sheet-rel-path (when sheet-zip-path (subs sheet-zip-path 3))
+                      table-paths (if sheet-rel-path
+                                    (get-sheet-table-paths zipfile sheet-rel-path)
+                                    [])]
+                table-path table-paths
+                :let [table-meta (parse-table-xml zipfile table-path)]
+                :when table-meta]
+            (assoc table-meta :sheet (:name sheet))))))
+
+(defn get-table
+  "Get data from a named Excel table.
+   Returns a map with :name and :data keys.
+   :data is a vector of maps using the table's column names as string keys."
+  [file-or-filename table-name]
+  (let [tables (get-table-names file-or-filename)
+        table (find-first #(= table-name (:name %)) tables)]
+    (when-not table
+      (throw-ex (format "Could not find table '%s'! Table does not exist." table-name)))
+    (let [ref (:ref table)
+          columns (:columns table)
+          {:keys [cols rows]} (parse-range ref)
+          [cs ce] cols
+          [rs re] rows
+          ;; Exclude header row: data starts at row (inc rs), ends at row (dec re)
+          data-range (str cs (inc rs) ":" ce (dec re))
+          ;; Map column letter keywords to column name strings
+          start-col-num (column-letter->number cs)
+          col-rename (into {} (map-indexed
+                               (fn [i col-name]
+                                 [(keyword (number->column-letter (+ start-col-num i))) col-name])
+                               columns))
+          sheet-data (get-sheet file-or-filename (:sheet table))
+          range-data (get-range sheet-data data-range)]
+      {:name table-name
+       :data (mapv #(-> % (rename-keys col-rename) (dissoc :_r)) range-data)})))
+
 (defn ws-relationships [n]
   (str xmlh
        (hc/html

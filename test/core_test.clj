@@ -3,7 +3,8 @@
             [clojure.set :refer [intersection]]
             [clojure.test :refer [deftest is run-tests testing]]
             [bb-excel.core :refer [get-sheets get-sheet-names get-sheet
-                                   get-range create-xlsx]]
+                                   get-range create-xlsx
+                                   get-table-names get-table]]
             [bb-excel.styled :as styled]
             [malli.core :as malli]
             [malli.generator :as mg])
@@ -224,6 +225,53 @@
       (is (= 2 (:B (first data))))
       (is (= 3 (:A (second data))))
       (is (= 4 (:B (second data)))))))
+
+;; Issue #14: Add support for reading Excel tables
+(deftest excel-tables-test
+  (testing "List all tables in a workbook"
+    (let [tables (get-table-names "test/data/tables.xlsx")]
+      (is (= 2 (count tables)))
+      (is (= #{"PeopleTable" "ProductsTable"} (set (map :name tables))))))
+
+  (testing "PeopleTable metadata"
+    (let [tables (get-table-names "test/data/tables.xlsx")
+          people (first (filter #(= "PeopleTable" (:name %)) tables))]
+      (is (= "People" (:sheet people)))
+      (is (= ["Name" "Age" "City" "Score"] (:columns people)))
+      (is (= "A1:D5" (:ref people)))))
+
+  (testing "ProductsTable metadata"
+    (let [tables (get-table-names "test/data/tables.xlsx")
+          products (first (filter #(= "ProductsTable" (:name %)) tables))]
+      (is (= "Products" (:sheet products)))
+      (is (= ["ProductName" "Price" "Category"] (:columns products)))
+      (is (= "A1:C4" (:ref products)))))
+
+  (testing "Get PeopleTable data"
+    (let [{:keys [name data]} (get-table "test/data/tables.xlsx" "PeopleTable")]
+      (is (= "PeopleTable" name))
+      (is (= 4 (count data)))
+      (is (= "Alice" (get (first data) "Name")))
+      (is (= 30 (get (first data) "Age")))
+      (is (= "New York" (get (first data) "City")))
+      (is (= "Bob" (get (second data) "Name")))
+      (is (= 25 (get (second data) "Age")))))
+
+  (testing "Get ProductsTable data"
+    (let [{:keys [name data]} (get-table "test/data/tables.xlsx" "ProductsTable")]
+      (is (= "ProductsTable" name))
+      (is (= 3 (count data)))
+      (is (= "Widget" (get (first data) "ProductName")))
+      (is (= "Electronics" (get (first data) "Category")))
+      (is (= "Thingamajig" (get (nth data 2) "ProductName")))
+      (is (= "Tools" (get (nth data 2) "Category")))))
+
+  (testing "Missing table throws exception"
+    (is (thrown-with-msg? ExceptionInfo #"Could not find table 'NonExistentTable'!"
+                          (get-table "test/data/tables.xlsx" "NonExistentTable"))))
+
+  (testing "Workbook without tables returns empty list"
+    (is (= [] (get-table-names "test/data/simple.xlsx")))))
 
 (comment
   (run-tests)
