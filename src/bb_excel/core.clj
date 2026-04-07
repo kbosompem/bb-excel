@@ -521,20 +521,25 @@
                                 :Target (str "worksheets/sheet" (inc x) ".xml")}])))))
 
 (defn- content-types
-  "Generate Content Types"
-  [n]
-  (str xmlh
-       (hc/html
-        (into [:Types {:xmlns "http://schemas.openxmlformats.org/package/2006/content-types"}
-               [:Default {:Extension :rels
-                          :ContentType "application/vnd.openxmlformats-package.relationships+xml"}]
-               [:Default {:Extension :xml
-                          :ContentType :application/xml}]
-               [:Override {:PartName "/xl/workbook.xml"
-                           :ContentType "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"}]]
-              (for [x (range n)]
-                [:Override {:PartName (str "/xl/worksheets/sheet" (inc x) ".xml")
-                            :ContentType "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"}])))))
+  "Generate Content Types, optionally including table content type overrides."
+  ([n] (content-types n []))
+  ([n table-ids]
+   (str xmlh
+        (hc/html
+         (into [:Types {:xmlns "http://schemas.openxmlformats.org/package/2006/content-types"}
+                [:Default {:Extension :rels
+                           :ContentType "application/vnd.openxmlformats-package.relationships+xml"}]
+                [:Default {:Extension :xml
+                           :ContentType :application/xml}]
+                [:Override {:PartName "/xl/workbook.xml"
+                            :ContentType "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"}]]
+               (concat
+                (for [x (range n)]
+                  [:Override {:PartName (str "/xl/worksheets/sheet" (inc x) ".xml")
+                              :ContentType "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"}])
+                (for [tid table-ids]
+                  [:Override {:PartName (str "/xl/tables/table" tid ".xml")
+                              :ContentType "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"}])))))))
 
 (defn excel-date-serial
   "Convert a java LocalDate to an MS Excel integer value"
@@ -596,6 +601,74 @@
     (str (hc/html [:worksheet xlns
                    [:sheetData (cons (generate-xml-row headers 0) rows)]]))))
 
+(defn- extract-table-headers
+  "Return a vector of string header names from the first row of sheet data."
+  [sheet-data]
+  (if (map? (first sheet-data))
+    (mapv #(if (keyword? %) (name %) (str %)) (keys (first sheet-data)))
+    (mapv str (first sheet-data))))
+
+(defn- table-row-count
+  "Return the number of data rows (excluding the header row)."
+  [sheet-data]
+  (if (map? (first sheet-data))
+    (count sheet-data)
+    (dec (count sheet-data))))
+
+(defn- make-table-ref
+  "Build an Excel range string covering header + data rows, e.g. 'A1:C4'."
+  [col-count row-count]
+  (str "A1:" (number->column-letter col-count) (inc row-count)))
+
+(defn- sanitize-table-name
+  "Replace characters that Excel forbids in table names with underscores."
+  [s]
+  (let [cleaned (str/replace (str s) #"[^A-Za-z0-9_\.]" "_")]
+    (if (re-matches #"[0-9].*" cleaned) (str "T" cleaned) cleaned)))
+
+(defn- make-table-xml
+  "Generate the xl/tables/tableN.xml content for an Excel table."
+  [table-id table-name table-style headers row-count]
+  (let [ref (make-table-ref (count headers) row-count)]
+    (str xmlh
+         (hc/html
+          [:table {:xmlns "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+                   :id table-id
+                   :name table-name
+                   :displayName table-name
+                   :ref ref}
+           [:autoFilter {:ref ref}]
+           (into [:tableColumns {:count (count headers)}]
+                 (map-indexed (fn [i h] [:tableColumn {:id (inc i) :name h}]) headers))
+           [:tableStyleInfo {:name table-style
+                             :showFirstColumn "0"
+                             :showLastColumn "0"
+                             :showRowStripes "1"
+                             :showColumnStripes "0"}]]))))
+
+(defn- make-sheet-rels-xml
+  "Generate xl/worksheets/_rels/sheetN.xml.rels pointing to a table file."
+  [table-id]
+  (str xmlh
+       (hc/html
+        [:Relationships {:xmlns "http://schemas.openxmlformats.org/package/2006/relationships"}
+         [:Relationship {:Id "rId1"
+                         :Type "http://schemas.openxmlformats.org/officeDocument/2006/relationships/table"
+                         :Target (str "../tables/table" table-id ".xml")}]])))
+
+(defn- create-table-sheet-xml
+  "Create worksheet XML that includes a <tableParts> reference to the table."
+  [data]
+  (let [sheet-data (:sheet data)
+        headers    (extract-table-headers sheet-data)
+        rows       (if (map? (first sheet-data))
+                     (map-indexed #(generate-xml-row %2 (inc %) (:cmap data)) sheet-data)
+                     (map-indexed #(generate-xml-row %2 (inc %)) (rest sheet-data)))]
+    (str (hc/html [:worksheet xlns
+                   [:sheetData (cons (generate-xml-row headers 0) rows)]
+                   [:tableParts {:count 1}
+                    [:tablePart {:r:id "rId1"}]]]))))
+
 (defn create-zip-entry
   "For a given filepath and content add to a java ZipOuputStream"
   [zip-stream entry-name content]
@@ -605,21 +678,63 @@
     (.closeEntry ^ZipOutputStream zip-stream)))
 
 (defn create-xlsx
-  "Create an Excel spreadsheet
-     file-path : Destination folder and filename. e.g /test/sample.xlsx will create the folder test 
-                  if it does not exist and place the newly created sample.xlsx in that folder
-     data : Data should be vector of maps or vector of vectors where each map or vector represents a row"
+  "Create an Excel spreadsheet.
+     file-path : Destination file path (parent directories are created as needed).
+     data      : Vector of sheet maps. Each map must have :name and :sheet keys.
+                 :sheet is a vector of maps (rows as maps) or vector of vectors
+                 (first vector = headers, rest = data rows).
+                 Add :table true (or :table {:name \"MyTable\" :style \"TableStyleMedium2\"})
+                 to any sheet to render its data as a named Excel table."
   [file-path data]
   (let [_ (io/make-parents file-path)
+        ;; Assign sequential table IDs to sheets that declare a table
+        table-counter (atom 0)
+        data-indexed  (mapv (fn [sheet]
+                              (if (:table sheet)
+                                (assoc sheet :_tid (swap! table-counter inc))
+                                sheet))
+                            data)
+        table-ids     (keep :_tid data-indexed)
         workbook-xml  (str xmlh (hc/html [:workbook xlns
                                           (into [:sheets]
-                                                (map-indexed #(vector :sheet {:name (:name %2) :sheetId (inc %)
-                                                                              :r:id (str "rId" (inc %))}) data))]))]
+                                                (map-indexed #(vector :sheet
+                                                                       {:name     (:name %2)
+                                                                        :sheetId  (inc %)
+                                                                        :r:id     (str "rId" (inc %))})
+                                                             data-indexed))]))]
     (with-open [fos (FileOutputStream. ^String file-path)
                 zos (ZipOutputStream. fos)]
+      ;; Write worksheet XML for each sheet
       (dorun (map-indexed
-              #(create-zip-entry zos (str "xl/worksheets/sheet" (inc %) ".xml")  (create-sheet-xml %2)) data))
-      (create-zip-entry zos "[Content_Types].xml" (content-types (count data)))
+              (fn [i sheet]
+                (create-zip-entry zos (str "xl/worksheets/sheet" (inc i) ".xml")
+                                  (if (:_tid sheet)
+                                    (create-table-sheet-xml sheet)
+                                    (create-sheet-xml sheet))))
+              data-indexed))
+      ;; Write table XML and worksheet relationship files for table sheets
+      (dorun (map-indexed
+              (fn [i sheet]
+                (when-let [tid (:_tid sheet)]
+                  (let [table-val  (:table sheet)
+                        sheet-rows (:sheet sheet)
+                        headers    (extract-table-headers sheet-rows)
+                        row-count  (table-row-count sheet-rows)
+                        tname      (cond
+                                     (string? table-val) (sanitize-table-name table-val)
+                                     (map? table-val)    (sanitize-table-name
+                                                          (get table-val :name (str "Table" tid)))
+                                     :else               (str "Table" tid))
+                        tstyle     (if (map? table-val)
+                                     (get table-val :style "TableStyleMedium2")
+                                     "TableStyleMedium2")]
+                    (create-zip-entry zos (str "xl/tables/table" tid ".xml")
+                                      (make-table-xml tid tname tstyle headers row-count))
+                    (create-zip-entry zos (str "xl/worksheets/_rels/sheet" (inc i) ".xml.rels")
+                                      (make-sheet-rels-xml tid)))))
+              data-indexed))
+      ;; Write package metadata
+      (create-zip-entry zos "[Content_Types].xml" (content-types (count data-indexed) table-ids))
       (create-zip-entry zos "_rels/.rels" wb-relationships)
-      (create-zip-entry zos "xl/_rels/workbook.xml.rels" (ws-relationships (count data)))
+      (create-zip-entry zos "xl/_rels/workbook.xml.rels" (ws-relationships (count data-indexed)))
       (create-zip-entry zos "xl/workbook.xml" workbook-xml))))
