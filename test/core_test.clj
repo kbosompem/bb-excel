@@ -273,6 +273,89 @@
   (testing "Workbook without tables returns empty list"
     (is (= [] (get-table-names "test/data/simple.xlsx")))))
 
+;; Issue #15: Add support for writing excel tables
+(deftest write-table-xlsx-test
+  (testing "Create table with :table true and verify via get-table"
+    (create-xlsx "tables_test.xlsx"
+                 [{:name "People"
+                   :table true
+                   :sheet [{"Name" "Alice" "Age" 30 "City" "New York"}
+                           {"Name" "Bob"   "Age" 25 "City" "London"}
+                           {"Name" "Carol" "Age" 35 "City" "Toronto"}]}])
+    (let [tables (get-table-names "tables_test.xlsx")]
+      (is (= 1 (count tables)))
+      (is (= "Table1" (:name (first tables))))
+      (is (= "People" (:sheet (first tables))))
+      (is (= ["Name" "Age" "City"] (:columns (first tables))))
+      (is (= "A1:C4" (:ref (first tables)))))
+    (let [{:keys [name data]} (get-table "tables_test.xlsx" "Table1")]
+      (is (= "Table1" name))
+      (is (= 3 (count data)))
+      (is (= "Alice" (get (first data) "Name")))
+      (is (= 30 (get (first data) "Age")))
+      (is (= "London" (get (second data) "City")))))
+
+  (testing "Create table with custom name and style"
+    (create-xlsx "tables_test.xlsx"
+                 [{:name "Products"
+                   :table {:name "SalesData" :style "TableStyleLight1"}
+                   :sheet [{"Product" "Widget" "Price" 9.99}
+                           {"Product" "Gadget" "Price" 19.99}]}])
+    (let [tables (get-table-names "tables_test.xlsx")]
+      (is (= 1 (count tables)))
+      (is (= "SalesData" (:name (first tables))))
+      (is (= ["Product" "Price"] (:columns (first tables)))))
+    (let [{:keys [data]} (get-table "tables_test.xlsx" "SalesData")]
+      (is (= 2 (count data)))
+      (is (= "Widget" (get (first data) "Product")))))
+
+  (testing "Mixed sheets — only table sheet has table metadata"
+    (create-xlsx "tables_test.xlsx"
+                 [{:name "Plain"
+                   :sheet [{"X" "a" "Y" "b"}
+                           {"X" "c" "Y" "d"}]}
+                  {:name "WithTable"
+                   :table {:name "MyTable"}
+                   :sheet [{"Col1" "foo" "Col2" "bar"}
+                           {"Col1" "baz" "Col2" "qux"}]}])
+    (let [tables (get-table-names "tables_test.xlsx")]
+      (is (= 1 (count tables)))
+      (is (= "MyTable" (:name (first tables))))
+      (is (= "WithTable" (:sheet (first tables)))))
+    ;; Verify the ZIP has table files only for the table sheet
+    (let [zf (ZipFile. "tables_test.xlsx")]
+      (is (some? (.getEntry zf "xl/tables/table1.xml")))
+      (is (some? (.getEntry zf "xl/worksheets/_rels/sheet2.xml.rels")))
+      (is (nil?  (.getEntry zf "xl/worksheets/_rels/sheet1.xml.rels")))
+      (.close zf)))
+
+  (testing "Multiple table sheets get distinct table IDs"
+    (create-xlsx "tables_test.xlsx"
+                 [{:name "Sheet1"
+                   :table {:name "TableA"}
+                   :sheet [{"ID" 1 "Val" "x"}]}
+                  {:name "Sheet2"
+                   :table {:name "TableB"}
+                   :sheet [{"ID" 2 "Val" "y"}]}])
+    (let [tables (get-table-names "tables_test.xlsx")
+          names  (set (map :name tables))]
+      (is (= 2 (count tables)))
+      (is (= #{"TableA" "TableB"} names)))
+    (let [zf (ZipFile. "tables_test.xlsx")]
+      (is (some? (.getEntry zf "xl/tables/table1.xml")))
+      (is (some? (.getEntry zf "xl/tables/table2.xml")))
+      (.close zf)))
+
+  (testing "Existing create-xlsx still works without :table"
+    (create-xlsx "tables_test.xlsx"
+                 [{:name "TestSheet"
+                   :sheet [{"A" "1" "B" "One"}
+                           {"A" "2" "B" "Two"}]}])
+    (is (= [] (get-table-names "tables_test.xlsx")))
+    (let [zf (ZipFile. "tables_test.xlsx")]
+      (is (nil? (.getEntry zf "xl/tables/table1.xml")))
+      (.close zf))))
+
 (comment
   (run-tests)
 
